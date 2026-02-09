@@ -11,6 +11,46 @@ Codegen_Input :: struct {
 	states:  ^[dynamic]Gen_State,
 }
 
+// Grammar から Token 型名を取得 (デフォルト: "Token")
+@(private = "file")
+get_token_type :: proc(g: ^Grammar) -> string {
+	return g.token_type_name if len(g.token_type_name) > 0 else "Token"
+}
+
+// Grammar から Token_Type enum 名を取得 (Token 型名 + "_Type")
+@(private = "file")
+get_token_enum_type :: proc(g: ^Grammar) -> string {
+	tk := get_token_type(g)
+	return fmt.tprintf("%s_Type", tk)
+}
+
+// Grammar から Node 型名を取得 (デフォルト: "Node")
+@(private = "file")
+get_node_type :: proc(g: ^Grammar) -> string {
+	return g.node_type_name if len(g.node_type_name) > 0 else "Node"
+}
+
+// Grammar から node_free 関数名を取得 ("<node_type>_free" の形式, 先頭小文字)
+@(private = "file")
+get_node_free :: proc(g: ^Grammar) -> string {
+	node := get_node_type(g)
+	if len(node) == 0 { return "node_free" }
+	// PascalCase/CamelCase を snake_case に変換
+	buf := make([dynamic]u8, 0, len(node) * 2, context.temp_allocator)
+	for i := 0; i < len(node); i += 1 {
+		ch := node[i]
+		if ch >= 'A' && ch <= 'Z' {
+			if i > 0 && node[i - 1] != '_' {
+				append(&buf, '_')
+			}
+			append(&buf, ch + 32) // to lowercase
+		} else {
+			append(&buf, ch)
+		}
+	}
+	return fmt.tprintf("%s_free", string(buf[:]))
+}
+
 // コード生成メイン
 codegen :: proc(input: Codegen_Input) -> string {
 	b: strings.Builder
@@ -18,7 +58,7 @@ codegen :: proc(input: Codegen_Input) -> string {
 
 	emit_header(&b, input.grammar)
 	emit_state_enum(&b, input.states)
-	emit_common_types(&b)
+	emit_common_types(&b, input.grammar)
 	emit_core_functions(&b, input.grammar)
 	emit_push_token(&b, input.grammar, input.states)
 	emit_parse_start(&b, input.grammar, input.states)
@@ -38,6 +78,26 @@ emit_header :: proc(b: ^strings.Builder, g: ^Grammar) {
 	fmt.sbprint(b, "import \"core:container/queue\"\n")
 	fmt.sbprint(b, "import \"core:fmt\"\n")
 	fmt.sbprint(b, "\n")
+
+	// ユーザーが実装すべきインターフェースをコメントで出力
+	tk_type := get_token_type(g)
+	tk_enum := get_token_enum_type(g)
+	node := get_node_type(g)
+	node_free := get_node_free(g)
+
+	fmt.sbprint(b, "// ========================================================================\n")
+	fmt.sbprint(b, "// このパーサーを使用するには、以下の型と関数を別ファイルで定義してください:\n")
+	fmt.sbprint(b, "//\n")
+	fmt.sbprintf(b, "//   %s :: struct {{ ... }}       // AST ノード型\n", node)
+	fmt.sbprintf(b, "//   %s(n: ^%s)                  // ノードの再帰的解放\n", node_free, node)
+	fmt.sbprint(b, "//\n")
+	fmt.sbprintf(b, "//   %s :: enum {{ ... }}   // トークン種別 (Eof, Error, ... を含む)\n", tk_enum)
+	fmt.sbprintf(b, "//   %s :: struct {{                   // トークン型\n", tk_type)
+	fmt.sbprintf(b, "//       type:     %s,\n", tk_enum)
+	fmt.sbprint(b, "//       consumed: bool,\n")
+	fmt.sbprint(b, "//       lexeme:   string,\n")
+	fmt.sbprint(b, "//   }\n")
+	fmt.sbprint(b, "// ========================================================================\n\n")
 }
 
 // ========================================================================
@@ -71,36 +131,33 @@ emit_state_enum :: proc(b: ^strings.Builder, states: ^[dynamic]Gen_State) {
 // ========================================================================
 
 @(private = "file")
-emit_common_types :: proc(b: ^strings.Builder) {
-	fmt.sbprint(b, `// パースループ制御アクション
-Parse_Loop_Action :: enum {
-	Break,
-	Continue,
-}
+emit_common_types :: proc(b: ^strings.Builder, g: ^Grammar) {
+	node := get_node_type(g)
 
-// パース結果
-Parse_Result :: enum {
-	Parse_End,
-	Push_More,
-}
-
-// パーサー状態
-Parse_State :: struct {
-	state: Parse_State_Kind,
-	node:  ^^Node,    // 現在のノードへのポインタ
-	saved: ^Node,     // 保存用ノード
-	op:    string,    // 演算子 (必要に応じて)
-}
-
-// パーサー
-Parser :: struct {
-	state_stack: queue.Queue(Parse_State),
-	root:        ^Node,
-	error_msg:   string,
-	nerr:        int,
-}
-
-`)
+	fmt.sbprint(b, "// パースループ制御アクション\n")
+	fmt.sbprint(b, "Parse_Loop_Action :: enum {\n")
+	fmt.sbprint(b, "\tBreak,\n")
+	fmt.sbprint(b, "\tContinue,\n")
+	fmt.sbprint(b, "}\n\n")
+	fmt.sbprint(b, "// パース結果\n")
+	fmt.sbprint(b, "Parse_Result :: enum {\n")
+	fmt.sbprint(b, "\tParse_End,\n")
+	fmt.sbprint(b, "\tPush_More,\n")
+	fmt.sbprint(b, "}\n\n")
+	fmt.sbprint(b, "// パーサー状態\n")
+	fmt.sbprint(b, "Parse_State :: struct {\n")
+	fmt.sbprint(b, "\tstate: Parse_State_Kind,\n")
+	fmt.sbprintf(b, "\tnode:  ^^%s,    // 現在のノードへのポインタ\n", node)
+	fmt.sbprintf(b, "\tsaved: ^%s,     // 保存用ノード\n", node)
+	fmt.sbprint(b, "\top:    string,    // 演算子 (必要に応じて)\n")
+	fmt.sbprint(b, "}\n\n")
+	fmt.sbprint(b, "// パーサー\n")
+	fmt.sbprint(b, "Parser :: struct {\n")
+	fmt.sbprint(b, "\tstate_stack: queue.Queue(Parse_State),\n")
+	fmt.sbprintf(b, "\troot:        ^%s,\n", node)
+	fmt.sbprint(b, "\terror_msg:   string,\n")
+	fmt.sbprint(b, "\tnerr:        int,\n")
+	fmt.sbprint(b, "}\n\n")
 }
 
 // ========================================================================
@@ -109,103 +166,106 @@ Parser :: struct {
 
 @(private = "file")
 emit_core_functions :: proc(b: ^strings.Builder, g: ^Grammar) {
-	fmt.sbprint(b, `// パーサーの初期化
-parser_new :: proc() -> ^Parser {
-	p := new(Parser)
-	queue.init(&p.state_stack, capacity = 16)
-	p.root = nil
-	p.error_msg = ""
-	p.nerr = 0
-	parser_begin(p, .Start, &p.root)
-	return p
-}
+	node := get_node_type(g)
+	node_free := get_node_free(g)
+	tk_type := get_token_type(g)
+	tk_enum := get_token_enum_type(g)
 
-// パーサーの破棄
-parser_destroy :: proc(p: ^Parser) {
-	if p == nil {
-		return
-	}
-	queue.destroy(&p.state_stack)
-	if p.root != nil {
-		node_free(p.root)
-	}
-	free(p)
-}
+	fmt.sbprint(b, "// パーサーの初期化\n")
+	fmt.sbprint(b, "parser_new :: proc() -> ^Parser {\n")
+	fmt.sbprint(b, "\tp := new(Parser)\n")
+	fmt.sbprint(b, "\tqueue.init(&p.state_stack, capacity = 16)\n")
+	fmt.sbprint(b, "\tp.root = nil\n")
+	fmt.sbprint(b, "\tp.error_msg = \"\"\n")
+	fmt.sbprint(b, "\tp.nerr = 0\n")
+	fmt.sbprint(b, "\tparser_begin(p, .Start, &p.root)\n")
+	fmt.sbprint(b, "\treturn p\n")
+	fmt.sbprint(b, "}\n\n")
 
-// パーサーのリセット
-parser_reset :: proc(p: ^Parser) {
-	queue.clear(&p.state_stack)
-	if p.root != nil {
-		node_free(p.root)
-	}
-	p.root = nil
-	p.error_msg = ""
-	p.nerr = 0
-	parser_begin(p, .Start, &p.root)
-}
+	fmt.sbprint(b, "// パーサーの破棄\n")
+	fmt.sbprint(b, "parser_destroy :: proc(p: ^Parser) {\n")
+	fmt.sbprint(b, "\tif p == nil {\n")
+	fmt.sbprint(b, "\t\treturn\n")
+	fmt.sbprint(b, "\t}\n")
+	fmt.sbprint(b, "\tqueue.destroy(&p.state_stack)\n")
+	fmt.sbprint(b, "\tif p.root != nil {\n")
+	fmt.sbprintf(b, "\t\t%s(p.root)\n", node_free)
+	fmt.sbprint(b, "\t}\n")
+	fmt.sbprint(b, "\tfree(p)\n")
+	fmt.sbprint(b, "}\n\n")
 
-// 新しい状態をスタックにプッシュ
-parser_begin :: proc(p: ^Parser, state: Parse_State_Kind, node: ^^Node) {
-	queue.push_front(&p.state_stack, Parse_State{state = state, node = node})
-}
+	fmt.sbprint(b, "// パーサーのリセット\n")
+	fmt.sbprint(b, "parser_reset :: proc(p: ^Parser) {\n")
+	fmt.sbprint(b, "\tqueue.clear(&p.state_stack)\n")
+	fmt.sbprint(b, "\tif p.root != nil {\n")
+	fmt.sbprintf(b, "\t\t%s(p.root)\n", node_free)
+	fmt.sbprint(b, "\t}\n")
+	fmt.sbprint(b, "\tp.root = nil\n")
+	fmt.sbprint(b, "\tp.error_msg = \"\"\n")
+	fmt.sbprint(b, "\tp.nerr = 0\n")
+	fmt.sbprint(b, "\tparser_begin(p, .Start, &p.root)\n")
+	fmt.sbprint(b, "}\n\n")
 
-// 現在の状態をスタックからポップ
-parser_end :: proc(p: ^Parser) {
-	if queue.len(p.state_stack) > 0 {
-		queue.pop_front(&p.state_stack)
-	}
-}
+	fmt.sbprint(b, "// 新しい状態をスタックにプッシュ\n")
+	fmt.sbprintf(b, "parser_begin :: proc(p: ^Parser, state: Parse_State_Kind, node: ^^%s) {{\n", node)
+	fmt.sbprint(b, "\tqueue.push_front(&p.state_stack, Parse_State{state = state, node = node})\n")
+	fmt.sbprint(b, "}\n\n")
 
-// 現在の状態を取得
-parser_get_state :: proc(p: ^Parser) -> ^Parse_State {
-	if queue.len(p.state_stack) <= 0 {
-		return nil
-	}
-	return queue.front_ptr(&p.state_stack)
-}
+	fmt.sbprint(b, "// 現在の状態をスタックからポップ\n")
+	fmt.sbprint(b, "parser_end :: proc(p: ^Parser) {\n")
+	fmt.sbprint(b, "\tif queue.len(p.state_stack) > 0 {\n")
+	fmt.sbprint(b, "\t\tqueue.pop_front(&p.state_stack)\n")
+	fmt.sbprint(b, "\t}\n")
+	fmt.sbprint(b, "}\n\n")
 
-// 現在の状態を更新
-parser_set_state :: proc(p: ^Parser, state: Parse_State_Kind, node: ^^Node = nil) {
-	if queue.len(p.state_stack) <= 0 {
-		return
-	}
-	top := parser_get_state(p)
-	if top == nil {
-		return
-	}
-	top.state = state
-	if node != nil {
-		top.node = node
-	}
-}
+	fmt.sbprint(b, "// 現在の状態を取得\n")
+	fmt.sbprint(b, "parser_get_state :: proc(p: ^Parser) -> ^Parse_State {\n")
+	fmt.sbprint(b, "\tif queue.len(p.state_stack) <= 0 {\n")
+	fmt.sbprint(b, "\t\treturn nil\n")
+	fmt.sbprint(b, "\t}\n")
+	fmt.sbprint(b, "\treturn queue.front_ptr(&p.state_stack)\n")
+	fmt.sbprint(b, "}\n\n")
 
-// エラー状態に遷移
-parser_error :: proc(p: ^Parser, msg: string) {
-	p.error_msg = msg
-	p.nerr += 1
-	if p.root != nil {
-		node_free(p.root)
-	}
-	p.root = nil
-	queue.clear(&p.state_stack)
-	parser_begin(p, .Error, &p.root)
-}
+	fmt.sbprint(b, "// 現在の状態を更新\n")
+	fmt.sbprintf(b, "parser_set_state :: proc(p: ^Parser, state: Parse_State_Kind, node: ^^%s = nil) {{\n", node)
+	fmt.sbprint(b, "\tif queue.len(p.state_stack) <= 0 {\n")
+	fmt.sbprint(b, "\t\treturn\n")
+	fmt.sbprint(b, "\t}\n")
+	fmt.sbprint(b, "\ttop := parser_get_state(p)\n")
+	fmt.sbprint(b, "\tif top == nil {\n")
+	fmt.sbprint(b, "\t\treturn\n")
+	fmt.sbprint(b, "\t}\n")
+	fmt.sbprint(b, "\ttop.state = state\n")
+	fmt.sbprint(b, "\tif node != nil {\n")
+	fmt.sbprint(b, "\t\ttop.node = node\n")
+	fmt.sbprint(b, "\t}\n")
+	fmt.sbprint(b, "}\n\n")
 
-// トークンが期待通りか確認して消費
-consumed :: proc(actual: ^Token, expected: Token_Type) -> bool {
-	if actual.type == expected {
-		actual.consumed = true
-		return true
-	}
-	return false
-}
+	fmt.sbprint(b, "// エラー状態に遷移\n")
+	fmt.sbprint(b, "parser_error :: proc(p: ^Parser, msg: string) {\n")
+	fmt.sbprint(b, "\tp.error_msg = msg\n")
+	fmt.sbprint(b, "\tp.nerr += 1\n")
+	fmt.sbprint(b, "\tif p.root != nil {\n")
+	fmt.sbprintf(b, "\t\t%s(p.root)\n", node_free)
+	fmt.sbprint(b, "\t}\n")
+	fmt.sbprint(b, "\tp.root = nil\n")
+	fmt.sbprint(b, "\tqueue.clear(&p.state_stack)\n")
+	fmt.sbprint(b, "\tparser_begin(p, .Error, &p.root)\n")
+	fmt.sbprint(b, "}\n\n")
 
-`)
+	fmt.sbprint(b, "// トークンが期待通りか確認して消費\n")
+	fmt.sbprintf(b, "consumed :: proc(actual: ^%s, expected: %s) -> bool {{\n", tk_type, tk_enum)
+	fmt.sbprint(b, "\tif actual.type == expected {\n")
+	fmt.sbprint(b, "\t\tactual.consumed = true\n")
+	fmt.sbprint(b, "\t\treturn true\n")
+	fmt.sbprint(b, "\t}\n")
+	fmt.sbprint(b, "\treturn false\n")
+	fmt.sbprint(b, "}\n\n")
 
 	// is_term: term_tokens が定義されている場合のみ生成
 	if len(g.term_tokens) > 0 {
 		fmt.sbprint(b, "// 文区切りトークンかチェック\n")
-		fmt.sbprint(b, "is_term :: proc(tk: ^Token) -> bool {\n")
+		fmt.sbprintf(b, "is_term :: proc(tk: ^%s) -> bool {{\n", tk_type)
 		fmt.sbprint(b, "\treturn ")
 		for tok, i in g.term_tokens {
 			if i > 0 {
@@ -215,16 +275,14 @@ consumed :: proc(actual: ^Token, expected: Token_Type) -> bool {
 		}
 		fmt.sbprint(b, "\n}\n\n")
 
-		fmt.sbprint(b, `// 文区切りトークンを消費
-consume_term :: proc(tk: ^Token) -> bool {
-	if is_term(tk) {
-		tk.consumed = true
-		return true
-	}
-	return false
-}
-
-`)
+		fmt.sbprint(b, "// 文区切りトークンを消費\n")
+		fmt.sbprintf(b, "consume_term :: proc(tk: ^%s) -> bool {{\n", tk_type)
+		fmt.sbprint(b, "\tif is_term(tk) {\n")
+		fmt.sbprint(b, "\t\ttk.consumed = true\n")
+		fmt.sbprint(b, "\t\treturn true\n")
+		fmt.sbprint(b, "\t}\n")
+		fmt.sbprint(b, "\treturn false\n")
+		fmt.sbprint(b, "}\n\n")
 	}
 
 	// is_between ヘルパー
@@ -243,32 +301,29 @@ is_between :: proc(state, from, to: Parse_State_Kind) -> bool {
 
 @(private = "file")
 emit_push_token :: proc(b: ^strings.Builder, g: ^Grammar, states: ^[dynamic]Gen_State) {
-	fmt.sbprint(b, `// トークンをプッシュしてパース
-parser_push_token :: proc(p: ^Parser, token: Token) -> Parse_Result {
-	tk := token
-	action: Parse_Loop_Action
-	max_iterations := 1000
+	tk_type := get_token_type(g)
 
-	for i := 0; i < max_iterations; i += 1 {
-		top := parser_get_state(p)
-		if top == nil {
-			break
-		}
-		pstate := top.state
-
-		if tk.consumed {
-			break
-		}
-
-		if tk.type == .Error && pstate != .Error {
-			parser_error(p, fmt.tprintf("Lexer error: %%s", tk.lexeme))
-			break
-		}
-
-		// 状態に応じたパース関数を呼び出す
-		if is_between(pstate, .Start, .Error) {
-			action = parse_start(p, &tk)
-`)
+	fmt.sbprint(b, "// トークンをプッシュしてパース\n")
+	fmt.sbprintf(b, "parser_push_token :: proc(p: ^Parser, token: %s) -> Parse_Result {{\n", tk_type)
+	fmt.sbprint(b, "\ttk := token\n")
+	fmt.sbprint(b, "\taction: Parse_Loop_Action\n")
+	fmt.sbprint(b, "\tmax_iterations := 1000\n\n")
+	fmt.sbprint(b, "\tfor i := 0; i < max_iterations; i += 1 {\n")
+	fmt.sbprint(b, "\t\ttop := parser_get_state(p)\n")
+	fmt.sbprint(b, "\t\tif top == nil {\n")
+	fmt.sbprint(b, "\t\t\tbreak\n")
+	fmt.sbprint(b, "\t\t}\n")
+	fmt.sbprint(b, "\t\tpstate := top.state\n\n")
+	fmt.sbprint(b, "\t\tif tk.consumed {\n")
+	fmt.sbprint(b, "\t\t\tbreak\n")
+	fmt.sbprint(b, "\t\t}\n\n")
+	fmt.sbprint(b, "\t\tif tk.type == .Error && pstate != .Error {\n")
+	fmt.sbprint(b, "\t\t\tparser_error(p, fmt.tprintf(\"Lexer error: %%s\", tk.lexeme))\n")
+	fmt.sbprint(b, "\t\t\tbreak\n")
+	fmt.sbprint(b, "\t\t}\n\n")
+	fmt.sbprint(b, "\t\t// 状態に応じたパース関数を呼び出す\n")
+	fmt.sbprint(b, "\t\tif is_between(pstate, .Start, .Error) {\n")
+	fmt.sbprint(b, "\t\t\taction = parse_start(p, &tk)\n")
 
 	// 各規則の状態範囲に基づくディスパッチを生成
 	groups := build_state_groups(g, states)
@@ -351,8 +406,10 @@ emit_parse_start :: proc(b: ^strings.Builder, g: ^Grammar, states: ^[dynamic]Gen
 		}
 	}
 
+	tk_type := get_token_type(g)
+
 	fmt.sbprint(b, "// 開始状態のパース\n")
-	fmt.sbprint(b, "parse_start :: proc(p: ^Parser, tk: ^Token) -> Parse_Loop_Action {\n")
+	fmt.sbprintf(b, "parse_start :: proc(p: ^Parser, tk: ^%s) -> Parse_Loop_Action {{\n", tk_type)
 	fmt.sbprint(b, "\ttop := parser_get_state(p)\n")
 	fmt.sbprint(b, "\tif top == nil { return .Break }\n\n")
 	fmt.sbprint(b, "\t#partial switch top.state {\n")
@@ -400,8 +457,10 @@ emit_parse_function :: proc(b: ^strings.Builder, input: Codegen_Input, rule: ^Ru
 		}
 	}
 
+	tk_type := get_token_type(g)
+
 	fmt.sbprintf(b, "// %s 規則のパース\n", rule.name)
-	fmt.sbprintf(b, "parse_%s :: proc(p: ^Parser, tk: ^Token) -> Parse_Loop_Action {{\n", rule.name)
+	fmt.sbprintf(b, "parse_%s :: proc(p: ^Parser, tk: ^%s) -> Parse_Loop_Action {{\n", rule.name, tk_type)
 	fmt.sbprint(b, "\ttop := parser_get_state(p)\n")
 	fmt.sbprint(b, "\tif top == nil { return .Break }\n\n")
 	fmt.sbprint(b, "\t#partial switch top.state {\n")

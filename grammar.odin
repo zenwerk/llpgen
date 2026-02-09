@@ -41,15 +41,17 @@ Rule :: struct {
 
 // 文法全体
 Grammar :: struct {
-	package_name: string,              // %package で指定された名前
-	tokens:       [dynamic]string,     // %token で宣言されたトークン名
-	term_tokens:  [dynamic]string,     // %term で宣言された文区切りトークン
-	precedence:   [dynamic]Prec_Entry, // 優先順位テーブル (index順に低→高)
-	rules:        [dynamic]Rule,       // 文法規則
-	start_rule:   string,              // 開始規則名 (最初のrule)
+	package_name:    string,              // %package で指定された名前
+	token_type_name: string,              // %token_type で指定されたトークン型名 (デフォルト: "Token")
+	node_type_name:  string,              // %node_type で指定されたノード型名 (デフォルト: "Node")
+	tokens:          [dynamic]string,     // %token で宣言されたトークン名
+	term_tokens:     [dynamic]string,     // %term で宣言された文区切りトークン
+	precedence:      [dynamic]Prec_Entry, // 優先順位テーブル (index順に低→高)
+	rules:           [dynamic]Rule,       // 文法規則
+	start_rule:      string,              // 開始規則名 (最初のrule)
 	// 以下は analysis.odin で設定
-	token_set:    map[string]bool,     // 全トークンのセット (O(1)検索用)
-	rule_map:     map[string]int,      // 規則名 → rules配列のインデックス
+	token_set:       map[string]bool,     // 全トークンのセット (O(1)検索用)
+	rule_map:        map[string]int,      // 規則名 → rules配列のインデックス
 }
 
 grammar_destroy :: proc(g: ^Grammar) {

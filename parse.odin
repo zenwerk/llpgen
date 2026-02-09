@@ -89,6 +89,10 @@ parse_header_section :: proc(p: ^Llp_Parser, g: ^Grammar) {
 			parse_precedence_directive(p, g, .None)
 		case .Dir_Term:
 			parse_term_directive(p, g)
+		case .Dir_Token_Type:
+			parse_token_type_directive(p, g)
+		case .Dir_Node_Type:
+			parse_node_type_directive(p, g)
 		case .Separator:
 			return // ヘッダ終了
 		case .Eof:
@@ -155,6 +159,28 @@ parse_term_directive :: proc(p: ^Llp_Parser, g: ^Grammar) {
 	if count == 0 {
 		llp_parser_error(p, fmt.tprintf("expected at least one token name after %%term at line %d", p.current.line))
 	}
+}
+
+// %token_type <ident>
+parse_token_type_directive :: proc(p: ^Llp_Parser, g: ^Grammar) {
+	llp_parser_advance(p) // %token_type を消費
+	if p.current.type != .Ident {
+		llp_parser_error(p, fmt.tprintf("expected type name after %%token_type at line %d", p.current.line))
+		return
+	}
+	g.token_type_name = p.current.lexeme
+	llp_parser_advance(p)
+}
+
+// %node_type <ident>
+parse_node_type_directive :: proc(p: ^Llp_Parser, g: ^Grammar) {
+	llp_parser_advance(p) // %node_type を消費
+	if p.current.type != .Ident {
+		llp_parser_error(p, fmt.tprintf("expected type name after %%node_type at line %d", p.current.line))
+		return
+	}
+	g.node_type_name = p.current.lexeme
+	llp_parser_advance(p)
 }
 
 // 文法規則セクションのパース

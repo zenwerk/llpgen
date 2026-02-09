@@ -1,5 +1,8 @@
 %package calc
 
+%token_type Token
+%node_type Node
+
 %token Eof Error
 %token Number Ident
 %token Plus Minus Asterisk Slash

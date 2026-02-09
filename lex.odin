@@ -99,6 +99,10 @@ lex_match_directive :: proc(word: string) -> Llp_Token_Type {
 		return .Dir_Nonassoc
 	case "term":
 		return .Dir_Term
+	case "token_type":
+		return .Dir_Token_Type
+	case "node_type":
+		return .Dir_Node_Type
 	case:
 		return .Error
 	}

@@ -9,8 +9,10 @@ Llp_Token_Type :: enum {
 	Dir_Left,     // %left
 	Dir_Right,    // %right
 	Dir_Nonassoc, // %nonassoc
-	Dir_Term,     // %term
-	Separator,    // %%
+	Dir_Term,       // %term
+	Dir_Token_Type, // %token_type
+	Dir_Node_Type,  // %node_type
+	Separator,      // %%
 	// 文法記号
 	Colon,        // :
 	Pipe,         // |
