@@ -1,0 +1,33 @@
+%package calc
+
+%token Eof Error
+%token Number Ident
+%token Plus Minus Asterisk Slash
+%token Left_Paren Right_Paren
+%token Comma
+
+%left Plus Minus
+%left Asterisk Slash
+
+%%
+expr : expr Plus term
+     | expr Minus term
+     | term
+     ;
+
+term : term Asterisk factor
+     | term Slash factor
+     | factor
+     ;
+
+factor : Number
+       | Ident Left_Paren args Right_Paren
+       | Left_Paren expr Right_Paren
+       | Minus factor
+       ;
+
+args : expr
+     | args Comma expr
+     |
+     ;
+%%
