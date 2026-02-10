@@ -234,8 +234,8 @@ factor : Number
 
 	testing.expectf(t, ok, "Expected codegen success")
 
-	// is_between ベースのディスパッチが生成されている
-	testing.expect(t, strings.contains(code, "is_between"), "Expected is_between usage")
+	// #partial switch ベースのディスパッチが生成されている
+	testing.expect(t, strings.contains(code, "#partial switch pstate"), "Expected #partial switch dispatch")
 
 	// parser_begin が Nonterminal 呼び出しで使われている
 	testing.expect(t, strings.contains(code, "parser_begin(p,"), "Expected parser_begin calls")
@@ -485,4 +485,72 @@ expr : Number Plus Number ;
 
 	// Await_Plus 状態が生成されている（pos=1 の Plus を待つ状態）
 	testing.expect(t, strings.contains(code, "Await_Plus"), "Expected Await_Plus state")
+}
+
+// ========================================================================
+// Phase 5: #partial switch ディスパッチテスト
+// ========================================================================
+
+@(test)
+codegen_partial_switch_dispatch_test :: proc(t: ^testing.T) {
+	input := `%package calc
+%token Eof Error Number Plus Minus Asterisk Slash Left_Paren Right_Paren Comma Ident
+%left Plus Minus
+%left Asterisk Slash
+%%
+expr : expr Plus term
+     | expr Minus term
+     | term
+     ;
+term : term Asterisk factor
+     | term Slash factor
+     | factor
+     ;
+factor : Number
+       | Ident Left_Paren args Right_Paren
+       | Left_Paren expr Right_Paren
+       | Minus factor
+       ;
+args : expr
+     | args Comma expr
+     |
+     ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+
+	testing.expectf(t, ok, "Expected codegen success")
+
+	// #partial switch が生成されている
+	testing.expect(t, strings.contains(code, "#partial switch pstate"), "Expected #partial switch dispatch")
+
+	// is_between が生成されていない
+	testing.expect(t, !strings.contains(code, "is_between"), "is_between should not be in generated code")
+
+	// case .Start, .End, .Error: が生成されている
+	testing.expect(t, strings.contains(code, "case .Start, .End, .Error:"), "Expected Start/End/Error case")
+
+	// 各規則の状態が case に列挙されている
+	testing.expect(t, strings.contains(code, "case .Expr, .Expr_Op:"), "Expected Expr states in case")
+	testing.expect(t, strings.contains(code, "case .Term, .Term_Op:"), "Expected Term states in case")
+}
+
+@(test)
+codegen_no_is_between_test :: proc(t: ^testing.T) {
+	input := `%package minimal
+%token Eof Number
+%%
+expr : Number ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+
+	testing.expectf(t, ok, "Expected codegen success")
+
+	// is_between ヘルパー関数が生成されていない
+	testing.expect(t, !strings.contains(code, "is_between :: proc"), "is_between helper should not be generated")
+	testing.expect(t, !strings.contains(code, "is_between("), "is_between calls should not be generated")
+
+	// #partial switch が使われている
+	testing.expect(t, strings.contains(code, "#partial switch pstate"), "Expected #partial switch dispatch")
 }

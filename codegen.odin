@@ -281,14 +281,6 @@ parser_error :: proc(p: ^Parser, msg: string) {{
 
 `, node_free)
 
-	// is_between ヘルパー
-	fmt.sbprint(b, `// 状態が範囲内かチェック
-@(private = "file")
-is_between :: proc(state, from, to: Parse_State_Kind) -> bool {
-	return from <= state && state <= to
-}
-
-`)
 }
 
 // ========================================================================
@@ -323,21 +315,32 @@ parser_push_token :: proc(p: ^Parser, token: %s) -> Parse_Result {{
 		}}
 
 		// 状態に応じたパース関数を呼び出す
-		if is_between(pstate, .Start, .Error) {{
+		#partial switch pstate {{
+		case .Start, .End, .Error:
 			action = parse_start(p, &tk)
 `, tk_type)
 
-	// 各規則の状態範囲に基づくディスパッチを生成
+	// 各規則の状態に基づくディスパッチを生成
 	groups := build_state_groups(g, states)
-	defer delete(groups)
+	defer {
+		for &group in groups {
+			delete(group.state_names)
+		}
+		delete(groups)
+	}
 
 	for &group in groups {
-		fmt.sbprintf(b, "\t\t}} else if is_between(pstate, .%s, .%s) {{\n",
-			group.first_state, group.last_state)
+		fmt.sbprint(b, "\t\tcase ")
+		for name, i in group.state_names {
+			if i > 0 { fmt.sbprint(b, ", ") }
+			fmt.sbprintf(b, ".%s", name)
+		}
+		fmt.sbprint(b, ":\n")
 		fmt.sbprintf(b, "\t\t\taction = parse_%s(p, &tk)\n", group.rule_name)
 	}
 
-	fmt.sbprint(b, `		} else {
+	fmt.sbprint(b,
+`		case:
 			fmt.eprintfln("Parse: Unknown state %v", top.state)
 			break
 		}
@@ -357,37 +360,26 @@ parser_push_token :: proc(p: ^Parser, token: %s) -> Parse_Result {{
 `)
 }
 
-// 状態グループ (1つの規則に所属する状態の最初と最後)
+// 状態グループ (1つの規則に所属する全状態名)
 @(private = "file")
 State_Group :: struct {
 	rule_name:   string,
-	first_state: string,
-	last_state:  string,
+	state_names: [dynamic]string,
 }
 
 @(private = "file")
 build_state_groups :: proc(g: ^Grammar, states: ^[dynamic]Gen_State) -> [dynamic]State_Group {
 	groups: [dynamic]State_Group
 	current_rule := ""
-	group_start := -1
 
-	for s, i in states {
+	for &s in states {
 		if s.rule != current_rule {
-			if group_start >= 0 {
-				groups[len(groups) - 1].last_state = states[i - 1].name
-			}
 			current_rule = s.rule
-			group_start = i
 			append(&groups, State_Group{
-				rule_name   = s.rule,
-				first_state = s.name,
-				last_state  = s.name,
+				rule_name = s.rule,
 			})
 		}
-	}
-	// 最後のグループの last_state を設定
-	if len(groups) > 0 && len(states) > 0 {
-		groups[len(groups) - 1].last_state = states[len(states) - 1].name
+		append(&groups[len(groups) - 1].state_names, s.name)
 	}
 
 	return groups
