@@ -3,6 +3,7 @@ package llpgen
 import "core:flags"
 import "core:fmt"
 import "core:os"
+import "core:strings"
 
 Options :: struct {
 	input:  string `args:"pos=0,required" usage:"Input .llp grammar file."`,
@@ -71,19 +72,44 @@ main :: proc() {
 		follows = &follows,
 		states  = &states,
 	}
+	token_code := codegen_token(&g)
+	defer delete(token_code)
 	code := codegen(ci)
 	defer delete(code)
 
 	// 8. 出力
 	if opt.output == "" {
-		fmt.print(code)
+		// stdout: セパレータ付きで両方出力
+		fmt.eprintln("// ===== TOKEN DEFINITIONS =====")
+		os.write(os.stdout, transmute([]u8)token_code)
+		fmt.eprintln("// ===== PARSER =====")
+		os.write(os.stdout, transmute([]u8)code)
 	} else {
+		// token ファイル名の導出: foo.odin -> foo_token.odin
+		token_output: string
+		if strings.has_suffix(opt.output, ".odin") {
+			base := opt.output[:len(opt.output) - len(".odin")]
+			token_output = strings.concatenate({base, "_token.odin"})
+		} else {
+			token_output = strings.concatenate({opt.output, "_token.odin"})
+		}
+		defer delete(token_output)
+
+		// parser ファイル書き出し
 		write_ok := os.write_entire_file(opt.output, transmute([]u8)code)
 		if !write_ok {
 			fmt.eprintfln("Error: cannot write to '%s'", opt.output)
 			os.exit(1)
 		}
 		fmt.printfln("Generated: %s (%d bytes)", opt.output, len(code))
+
+		// token ファイル書き出し
+		write_ok2 := os.write_entire_file(token_output, transmute([]u8)token_code)
+		if !write_ok2 {
+			fmt.eprintfln("Error: cannot write to '%s'", token_output)
+			os.exit(1)
+		}
+		fmt.printfln("Generated: %s (%d bytes)", token_output, len(token_code))
 	}
 
 	// 統計情報

@@ -74,8 +74,6 @@ codegen :: proc(input: Codegen_Input) -> string {
 @(private = "file")
 emit_header :: proc(b: ^strings.Builder, g: ^Grammar) {
 	pkg := g.package_name if len(g.package_name) > 0 else "parser"
-	tk_type := get_token_type(g)
-	tk_enum := get_token_enum_type(g)
 	node := get_node_type(g)
 	node_free := get_node_free(g)
 
@@ -91,15 +89,10 @@ import "core:fmt"
 //   %s :: struct {{ ... }}       // AST ノード型
 //   %s(n: ^%s)                  // ノードの再帰的解放
 //
-//   %s :: enum {{ ... }}   // トークン種別 (Eof, Error, ... を含む)
-//   %s :: struct {{                   // トークン型
-//       type:     %s,
-//       consumed: bool,
-//       lexeme:   string,
-//   }}
+// トークン型は _token.odin に自動生成されます。
 // ========================================================================
 
-`, pkg, node, node_free, node, tk_enum, tk_type, tk_enum)
+`, pkg, node, node_free, node)
 }
 
 // ========================================================================
@@ -176,8 +169,6 @@ Parser :: struct {{
 emit_core_functions :: proc(b: ^strings.Builder, g: ^Grammar) {
 	node := get_node_type(g)
 	node_free := get_node_free(g)
-	tk_type := get_token_type(g)
-	tk_enum := get_token_enum_type(g)
 
 	// parser_new
 	fmt.sbprint(b,
@@ -288,43 +279,6 @@ parser_error :: proc(p: ^Parser, msg: string) {{
 }}
 
 `, node_free)
-
-	// consumed
-	fmt.sbprintf(b,
-`// トークンが期待通りか確認して消費
-consumed :: proc(actual: ^%s, expected: %s) -> bool {{
-	if actual.type == expected {{
-		actual.consumed = true
-		return true
-	}}
-	return false
-}}
-
-`, tk_type, tk_enum)
-
-	// is_term: term_tokens が定義されている場合のみ生成
-	if len(g.term_tokens) > 0 {
-		fmt.sbprintf(b, "// 文区切りトークンかチェック\nis_term :: proc(tk: ^%s) -> bool {{\n\treturn ", tk_type)
-		for tok, i in g.term_tokens {
-			if i > 0 {
-				fmt.sbprint(b, " || ")
-			}
-			fmt.sbprintf(b, "tk.type == .%s", tok)
-		}
-		fmt.sbprint(b, "\n}\n\n")
-
-		fmt.sbprintf(b,
-`// 文区切りトークンを消費
-consume_term :: proc(tk: ^%s) -> bool {{
-	if is_term(tk) {{
-		tk.consumed = true
-		return true
-	}}
-	return false
-}}
-
-`, tk_type)
-	}
 
 	// is_between ヘルパー
 	fmt.sbprint(b, `// 状態が範囲内かチェック
@@ -746,4 +700,108 @@ find_state_for :: proc(states: ^[dynamic]Gen_State, rule_name: string, prod_idx:
 		}
 	}
 	return "Error"
+}
+
+// ========================================================================
+// Token 定義ファイル (_token.odin) のコード生成
+// ========================================================================
+
+// Token 定義コード生成メイン
+codegen_token :: proc(g: ^Grammar) -> string {
+	b: strings.Builder
+	strings.builder_init(&b)
+
+	emit_token_header(&b, g)
+	emit_token_type_enum(&b, g)
+	emit_token_struct(&b, g)
+	emit_token_functions(&b, g)
+
+	return strings.to_string(b)
+}
+
+// Token ファイルのヘッダ (package 宣言 + 自動生成コメント)
+@(private = "file")
+emit_token_header :: proc(b: ^strings.Builder, g: ^Grammar) {
+	pkg := g.package_name if len(g.package_name) > 0 else "parser"
+
+	fmt.sbprintf(b,
+`package %s
+
+// このファイルは llpgen により自動生成されました。手動で編集しないでください。
+
+`, pkg)
+}
+
+// Token_Type enum の生成
+@(private = "file")
+emit_token_type_enum :: proc(b: ^strings.Builder, g: ^Grammar) {
+	tk_enum := get_token_enum_type(g)
+
+	fmt.sbprintf(b, "// トークン種別\n%s :: enum {{\n", tk_enum)
+	for tok in g.tokens {
+		fmt.sbprintf(b, "\t%s,\n", tok)
+	}
+	fmt.sbprint(b, "}\n\n")
+}
+
+// Token struct の生成
+@(private = "file")
+emit_token_struct :: proc(b: ^strings.Builder, g: ^Grammar) {
+	tk_type := get_token_type(g)
+	tk_enum := get_token_enum_type(g)
+
+	fmt.sbprintf(b,
+`// トークン
+%s :: struct {{
+	type:     %s,
+	consumed: bool,
+	lexeme:   string,
+	using pos: Pos,
+}}
+
+`, tk_type, tk_enum)
+}
+
+// Token 関連関数の生成 (consumed, is_term, consume_term)
+@(private = "file")
+emit_token_functions :: proc(b: ^strings.Builder, g: ^Grammar) {
+	tk_type := get_token_type(g)
+	tk_enum := get_token_enum_type(g)
+
+	// consumed
+	fmt.sbprintf(b,
+`// トークンが期待通りか確認して消費
+consumed :: proc(actual: ^%s, expected: %s) -> bool {{
+	if actual.type == expected {{
+		actual.consumed = true
+		return true
+	}}
+	return false
+}}
+
+`, tk_type, tk_enum)
+
+	// is_term / consume_term: term_tokens が定義されている場合のみ生成
+	if len(g.term_tokens) > 0 {
+		fmt.sbprintf(b, "// 文区切りトークンかチェック\nis_term :: proc(tk: ^%s) -> bool {{\n\treturn ", tk_type)
+		for tok, i in g.term_tokens {
+			if i > 0 {
+				fmt.sbprint(b, " || ")
+			}
+			fmt.sbprintf(b, "tk.type == .%s", tok)
+		}
+		fmt.sbprint(b, "\n}\n\n")
+
+		fmt.sbprintf(b,
+`// 文区切りトークンを消費
+consume_term :: proc(tk: ^%s) -> bool {{
+	if is_term(tk) {{
+		tk.consumed = true
+		return true
+	}}
+	return false
+}}
+
+`, tk_type)
+	}
 }
