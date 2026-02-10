@@ -610,75 +610,95 @@ emit_production_body :: proc(b: ^strings.Builder, input: Codegen_Input, rule: ^R
 	fmt.sbprintf(b, "%s// TODO: AST node construction\n", indent)
 
 	if first_sym.kind == .Terminal {
-		// Terminal を消費してから次へ
-		next_state := find_state_for(input.states, rule.name, prod_idx, 1)
+		fmt.sbprintf(b, "%stk.consumed = true\n", indent)
 		if len(prod.symbols) == 1 {
-			fmt.sbprintf(b, "%stk.consumed = true\n", indent)
+			// 単一 Terminal → parse_end
 			fmt.sbprintf(b, "%sparser_end(p)\n", indent)
 			fmt.sbprintf(b, "%sreturn .Continue\n", indent)
 		} else {
-			fmt.sbprintf(b, "%stk.consumed = true\n", indent)
-			fmt.sbprintf(b, "%sparser_set_state(p, .%s)\n", indent, next_state)
-			fmt.sbprintf(b, "%sreturn .Continue\n", indent)
+			// Terminal 消費後: 次のシンボル列を処理
+			emit_transition_after_pos(b, input, rule, prod_idx, 0, indent)
 		}
 	} else {
 		// Nonterminal → parser_begin
 		nonterminal_start := find_state_for(input.states, first_sym.name, 0, 0)
-		next_state := find_state_for(input.states, rule.name, prod_idx, 1)
 		if len(prod.symbols) == 1 {
+			// 単一 Nonterminal → parse_end + begin
 			fmt.sbprintf(b, "%sparser_end(p)\n", indent)
 			fmt.sbprintf(b, "%sparser_begin(p, .%s, top.node)\n", indent, nonterminal_start)
 			fmt.sbprintf(b, "%sreturn .Continue\n", indent)
 		} else {
-			fmt.sbprintf(b, "%sparser_set_state(p, .%s)\n", indent, next_state)
-			fmt.sbprintf(b, "%sparser_begin(p, .%s, top.node)\n", indent, nonterminal_start)
+			// Nonterminal の後: 次の実在する状態に set_state + begin
+			next_real := find_next_real_state(input.states, rule.name, prod_idx, 1, prod)
+			if next_real == "" {
+				// 残りの状態なし → parse_end + begin
+				fmt.sbprintf(b, "%sparser_end(p)\n", indent)
+				fmt.sbprintf(b, "%sparser_begin(p, .%s, top.node)\n", indent, nonterminal_start)
+			} else {
+				fmt.sbprintf(b, "%sparser_set_state(p, .%s)\n", indent, next_real)
+				fmt.sbprintf(b, "%sparser_begin(p, .%s, top.node)\n", indent, nonterminal_start)
+			}
 			fmt.sbprintf(b, "%sreturn .Continue\n", indent)
 		}
 	}
 }
 
+// pos の位置のシンボルを処理した後の遷移を生成
+// Terminal 消費後に次が Nonterminal の場合、直接 begin + set_state を行う
+@(private = "file")
+emit_transition_after_pos :: proc(b: ^strings.Builder, input: Codegen_Input, rule: ^Rule, prod_idx: int, pos: int, indent: string) {
+	prod := &rule.productions[prod_idx]
+	next_pos := pos + 1
+
+	if next_pos >= len(prod.symbols) {
+		// 最後のシンボル → parse_end
+		fmt.sbprintf(b, "%sparser_end(p)\n", indent)
+		fmt.sbprintf(b, "%sreturn .Continue\n", indent)
+		return
+	}
+
+	next_sym := prod.symbols[next_pos]
+
+	if next_sym.kind == .Terminal {
+		// 次が Terminal → 次の状態に遷移
+		next_real := find_next_real_state(input.states, rule.name, prod_idx, next_pos, prod)
+		if next_real != "" {
+			fmt.sbprintf(b, "%sparser_set_state(p, .%s)\n", indent, next_real)
+		}
+		fmt.sbprintf(b, "%sreturn .Continue\n", indent)
+	} else {
+		// 次が Nonterminal → 直接 begin し、その先の状態に set_state
+		nonterminal_start := find_state_for(input.states, next_sym.name, 0, 0)
+		next_real := find_next_real_state(input.states, rule.name, prod_idx, next_pos + 1, prod)
+		if next_real == "" {
+			// Nonterminal の後に状態なし → parse_end + begin
+			fmt.sbprintf(b, "%sparser_end(p)\n", indent)
+			fmt.sbprintf(b, "%sparser_begin(p, .%s, top.node)\n", indent, nonterminal_start)
+		} else {
+			fmt.sbprintf(b, "%sparser_set_state(p, .%s)\n", indent, next_real)
+			fmt.sbprintf(b, "%sparser_begin(p, .%s, top.node)\n", indent, nonterminal_start)
+		}
+		fmt.sbprintf(b, "%sreturn .Continue\n", indent)
+	}
+}
+
 // 中間状態のケース
+// Phase 4: この状態は常にTerminal位置 (Nonterminal位置は通過状態として生成されない)
 @(private = "file")
 emit_intermediate_case :: proc(b: ^strings.Builder, input: Codegen_Input, rule: ^Rule, state: ^Gen_State) {
-	g := input.grammar
 	prod := &rule.productions[state.prod]
 
 	fmt.sbprintf(b, "\tcase .%s:\n", state.name)
 
 	sym := prod.symbols[state.pos]
-	is_last := (state.pos == len(prod.symbols) - 1)
 
-	if sym.kind == .Terminal {
-		fmt.sbprintf(b, "\t\tif consumed(tk, .%s) {{\n", sym.name)
-		if is_last {
-			fmt.sbprint(b, "\t\t\t// TODO: AST node construction\n")
-			fmt.sbprint(b, "\t\t\tparser_end(p)\n")
-			fmt.sbprint(b, "\t\t\treturn .Continue\n")
-		} else {
-			next_state := find_state_for(input.states, rule.name, state.prod, state.pos + 1)
-			fmt.sbprint(b, "\t\t\t// TODO: AST node construction\n")
-			fmt.sbprintf(b, "\t\t\tparser_set_state(p, .%s)\n", next_state)
-			fmt.sbprint(b, "\t\t\treturn .Continue\n")
-		}
-		fmt.sbprint(b, "\t\t} else {\n")
-		fmt.sbprintf(b, "\t\t\tparser_error(p, fmt.tprintf(\"Expected %s, got %%v\", tk.type))\n", sym.name)
-		fmt.sbprint(b, "\t\t}\n")
-	} else {
-		// Nonterminal
-		nonterminal_start := find_state_for(input.states, sym.name, 0, 0)
-		if is_last {
-			fmt.sbprint(b, "\t\t// TODO: AST node construction\n")
-			fmt.sbprint(b, "\t\tparser_end(p)\n")
-			fmt.sbprintf(b, "\t\tparser_begin(p, .%s, top.node)\n", nonterminal_start)
-			fmt.sbprint(b, "\t\treturn .Continue\n")
-		} else {
-			next_state := find_state_for(input.states, rule.name, state.prod, state.pos + 1)
-			fmt.sbprint(b, "\t\t// TODO: AST node construction\n")
-			fmt.sbprintf(b, "\t\tparser_set_state(p, .%s)\n", next_state)
-			fmt.sbprintf(b, "\t\tparser_begin(p, .%s, top.node)\n", nonterminal_start)
-			fmt.sbprint(b, "\t\treturn .Continue\n")
-		}
-	}
+	// Phase 4: 中間状態は常に Terminal 位置 (Nonterminal 位置は通過状態としてスキップ済み)
+	fmt.sbprintf(b, "\t\tif consumed(tk, .%s) {{\n", sym.name)
+	fmt.sbprint(b, "\t\t\t// TODO: AST node construction\n")
+	emit_transition_after_pos(b, input, rule, state.prod, state.pos, "\t\t\t")
+	fmt.sbprint(b, "\t\t} else {\n")
+	fmt.sbprintf(b, "\t\t\tparser_error(p, fmt.tprintf(\"Expected %s, got %%v\", tk.type))\n", sym.name)
+	fmt.sbprint(b, "\t\t}\n")
 }
 
 // 指定された規則・production・位置に対応する状態名を検索
@@ -696,6 +716,21 @@ find_state_for :: proc(states: ^[dynamic]Gen_State, rule_name: string, prod_idx:
 		}
 	}
 	return "Error"
+}
+
+// 指定された位置以降で最初に存在する状態を検索（通過状態スキップ対応）
+// 通過状態（Nonterminal 位置）が生成されていない場合、その先の状態を返す
+// 状態が見つからない場合は "" を返す (= parse_end が必要)
+@(private = "file")
+find_next_real_state :: proc(states: ^[dynamic]Gen_State, rule_name: string, prod_idx: int, from_pos: int, prod: ^Production) -> string {
+	for pos := from_pos; pos < len(prod.symbols); pos += 1 {
+		for &s in states {
+			if s.rule == rule_name && s.prod == prod_idx && s.pos == pos {
+				return s.name
+			}
+		}
+	}
+	return "" // 残りの状態なし → parse_end が必要
 }
 
 // ========================================================================

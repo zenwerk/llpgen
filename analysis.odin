@@ -565,13 +565,22 @@ generate_states :: proc(g: ^Grammar, op_loops: ^map[string]Operator_Loop = nil, 
 		})
 
 		// 各 production の各ドット位置に対して中間状態を生成
-		// 末尾位置 (pos == len(symbols)) は生成しない
-		// → 最終シンボル処理時に直接 parser_end() を呼ぶため不要
+		// - 末尾位置 (pos == len(symbols)) は生成しない (Phase 2)
+		// - pos のシンボルが Nonterminal の場合は通過状態なので生成しない (Phase 4)
+		//   → 前の状態から直接 Nonterminal を begin し、その先の状態に遷移する
 		for &prod, prod_idx in rule.productions {
 			for pos := 1; pos < len(prod.symbols); pos += 1 {
-				prev_sym := prod.symbols[pos - 1]
-				sym_pascal := to_pascal_case(prev_sym.name, context.temp_allocator)
-				state_name := fmt.tprintf("%s_After_%s", rule_pascal, sym_pascal)
+				current_sym := prod.symbols[pos]
+
+				// 通過状態のスキップ: 現在位置のシンボルが Nonterminal の場合は状態を生成しない
+				if current_sym.kind == .Nonterminal {
+					continue
+				}
+
+				// 状態名: 「次に待つシンボル」で命名
+				// Terminal を待つ状態 → "Await_<Terminal名>"
+				sym_pascal := to_pascal_case(current_sym.name, context.temp_allocator)
+				state_name := fmt.tprintf("%s_Await_%s", rule_pascal, sym_pascal)
 
 				// 同名の状態がすでにあるか確認し、重複回避
 				unique_name := make_unique_state_name(&states, state_name)

@@ -696,6 +696,84 @@ expr : expr Plus Number Minus
 }
 
 // ========================================================================
+// Phase 4: 通過状態スキップと意味的命名テスト
+// ========================================================================
+
+@(test)
+analysis_passthrough_skip_test :: proc(t: ^testing.T) {
+	// factor : Ident Left_Paren args Right_Paren
+	// pos=0: Factor (開始), pos=1: Await_Left_Paren (Terminal),
+	// pos=2: SKIP (args = Nonterminal), pos=3: Await_Right_Paren (Terminal, is_last なので生成しない)
+	// → 結果: Factor, Factor_Await_Left_Paren, Factor_Await_Right_Paren の3状態のみ
+	// (pos=3 は Phase 2 で除去済みだが、pos=2 の通過状態が Phase 4 で除去される)
+	input := `%token Eof Number Ident Left_Paren Right_Paren
+%%
+factor : Ident Left_Paren args Right_Paren ;
+args : Number ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	states := generate_states(&g)
+	defer states_destroy(&states)
+
+	// factor の状態: Factor (開始), Factor_Await_Left_Paren (pos=1), Factor_Await_Right_Paren (pos=3)
+	// args の状態: Args (開始)
+	// pos=2 (args, Nonterminal) は通過状態としてスキップ
+	factor_states := 0
+	for &s in states {
+		if s.rule == "factor" {
+			factor_states += 1
+		}
+	}
+	testing.expectf(t, factor_states == 3, "Expected 3 factor states (passthrough skipped), got %d", factor_states)
+
+	// Await_ 命名が使われている
+	found_await := false
+	for &s in states {
+		if s.rule == "factor" && s.pos > 0 {
+			// 中間状態名に "Await_" が含まれている
+			for i := 0; i + 6 <= len(s.name); i += 1 {
+				if s.name[i:i+6] == "Await_" {
+					found_await = true
+					break
+				}
+			}
+		}
+	}
+	testing.expect(t, found_await, "Expected Await_ naming for terminal states")
+}
+
+@(test)
+analysis_nonterminal_only_production_test :: proc(t: ^testing.T) {
+	// A : B C ; (B, C が全て Nonterminal)
+	// pos=0: A (開始), pos=1: SKIP (C = Nonterminal)
+	// → A のみ (中間状態はすべて通過状態)
+	input := `%token Eof Number
+%%
+a : b c ;
+b : Number ;
+c : Number ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	states := generate_states(&g)
+	defer states_destroy(&states)
+
+	a_states := 0
+	for &s in states {
+		if s.rule == "a" {
+			a_states += 1
+		}
+	}
+	// A のみ: 全中間状態は Nonterminal 位置なのでスキップ
+	testing.expectf(t, a_states == 1, "Expected 1 state for 'a' (all passthrough), got %d", a_states)
+}
+
+// ========================================================================
 // 統合テスト: parse → build_indices → first → follow → conflicts → states
 // ========================================================================
 

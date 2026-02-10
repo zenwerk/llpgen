@@ -394,16 +394,16 @@ factor : Number ;
 @(test)
 codegen_operator_loop_braces_balanced_test :: proc(t: ^testing.T) {
 	input := `%package calc
-%token Eof Error Number Plus Minus Asterisk Slash Left_Paren Right_Paren
+%token Eof Error Number Plus Minus Asterisk Slug Left_Paren Right_Paren
 %left Plus Minus
-%left Asterisk Slash
+%left Asterisk Slug
 %%
 expr : expr Plus term
      | expr Minus term
      | term
      ;
 term : term Asterisk factor
-     | term Slash factor
+     | term Slug factor
      | factor
      ;
 factor : Number
@@ -430,4 +430,59 @@ factor : Number
 		if ch == ')' { paren_count -= 1 }
 	}
 	testing.expectf(t, paren_count == 0, "Unbalanced parens: count=%d", paren_count)
+}
+
+// ========================================================================
+// Phase 4: 通過状態除去 + 意味的命名テスト
+// ========================================================================
+
+@(test)
+codegen_passthrough_elimination_test :: proc(t: ^testing.T) {
+	// factor : Ident Left_Paren args Right_Paren | Left_Paren expr Right_Paren | Minus factor ;
+	// Phase 4: Nonterminal 位置の通過状態が除去されている
+	input := `%package test_pkg
+%token Eof Number Ident Left_Paren Right_Paren Minus
+%%
+factor : Number
+       | Ident Left_Paren args Right_Paren
+       | Left_Paren expr Right_Paren
+       | Minus factor
+       ;
+args : Number ;
+expr : Number ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+
+	testing.expectf(t, ok, "Expected codegen success")
+
+	// Phase 4 の Await_ 命名が使われている
+	testing.expect(t, strings.contains(code, "Await_"), "Expected Await_ state naming")
+
+	// After_ 命名が使われていない（通過状態が除去されている）
+	testing.expect(t, !strings.contains(code, "After_"), "After_ naming should not exist (Phase 4)")
+
+	// Left_Paren 消費後に直接 Nonterminal を begin するコードがある
+	testing.expect(t, strings.contains(code, "parser_begin(p, .Args"), "Expected direct begin for args")
+	testing.expect(t, strings.contains(code, "parser_begin(p, .Expr"), "Expected direct begin for expr")
+
+	// Minus 消費後に直接 Factor を begin するコードがある
+	testing.expect(t, strings.contains(code, "parser_begin(p, .Factor"), "Expected direct begin for factor (unary)")
+}
+
+@(test)
+codegen_await_naming_test :: proc(t: ^testing.T) {
+	// 意味的な命名: Terminal待ち状態は Await_<Terminal名>
+	input := `%package test_pkg
+%token Eof Number Plus
+%%
+expr : Number Plus Number ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+
+	testing.expectf(t, ok, "Expected codegen success")
+
+	// Await_Plus 状態が生成されている（pos=1 の Plus を待つ状態）
+	testing.expect(t, strings.contains(code, "Await_Plus"), "Expected Await_Plus state")
 }
