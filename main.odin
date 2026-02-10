@@ -33,15 +33,33 @@ main :: proc() {
 	// 3. grammar_build_indices() でインデックス構築
 	grammar_build_indices(&g)
 
-	// 3.5. 直接左再帰の検出 (エラー)
+	// 3.5. 演算子ループパターンの検出 + 変換不可能な左再帰の検出
+	op_loops := detect_operator_loops(&g)
+	defer operator_loops_destroy(&op_loops)
+
+	if len(op_loops) > 0 {
+		fmt.eprintfln("Info: %d operator-loop rule(s) detected:", len(op_loops))
+		for name, &loop in op_loops {
+			fmt.eprintfln("  rule '%s': %s (op %s)* pattern",
+				name, loop.base_name, strings.join(loop.operators[:], ", ", context.temp_allocator))
+		}
+	}
+
+	// 演算子ループで変換できない左再帰のみエラーにする
 	left_recs := check_left_recursion(&g)
 	defer delete(left_recs)
-	if len(left_recs) > 0 {
-		fmt.eprintfln("Error: %d direct left recursion(s) detected:", len(left_recs))
-		for &lr in left_recs {
+	unhandled_left_recs: [dynamic]Left_Recursion
+	defer delete(unhandled_left_recs)
+	for &lr in left_recs {
+		if lr.rule_name not_in op_loops {
+			append(&unhandled_left_recs, lr)
+		}
+	}
+	if len(unhandled_left_recs) > 0 {
+		fmt.eprintfln("Error: %d direct left recursion(s) cannot be auto-transformed:", len(unhandled_left_recs))
+		for &lr in unhandled_left_recs {
 			rule, _ := grammar_find_rule(&g, lr.rule_name)
 			prod := &rule.productions[lr.prod_idx]
-			// production のシンボル列を表示
 			sym_buf: strings.Builder
 			strings.builder_init(&sym_buf, context.temp_allocator)
 			for &sym, i in prod.symbols {
@@ -75,8 +93,8 @@ main :: proc() {
 		delete(follows)
 	}
 
-	// 5. check_ll1_conflicts() で衝突検出 (警告出力)
-	conflicts := check_ll1_conflicts(&g, firsts, follows)
+	// 5. check_ll1_conflicts() で衝突検出 (警告出力、演算子ループ変換済み規則はスキップ)
+	conflicts := check_ll1_conflicts(&g, firsts, follows, &op_loops)
 	defer delete(conflicts)
 	if len(conflicts) > 0 {
 		fmt.eprintfln("Warning: %d LL(1) conflict(s) detected:", len(conflicts))
@@ -87,15 +105,16 @@ main :: proc() {
 	}
 
 	// 6. generate_states() で状態生成
-	states := generate_states(&g)
+	states := generate_states(&g, &op_loops)
 	defer states_destroy(&states)
 
 	// 7. codegen() でコード生成
 	ci := Codegen_Input{
-		grammar = &g,
-		firsts  = &firsts,
-		follows = &follows,
-		states  = &states,
+		grammar  = &g,
+		firsts   = &firsts,
+		follows  = &follows,
+		states   = &states,
+		op_loops = &op_loops,
 	}
 	token_code := codegen_token(&g)
 	defer delete(token_code)

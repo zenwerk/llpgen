@@ -564,6 +564,138 @@ args : Number
 }
 
 // ========================================================================
+// 3.1a-3: 演算子ループパターン検出テスト
+// ========================================================================
+
+@(test)
+analysis_operator_loop_basic_test :: proc(t: ^testing.T) {
+	// expr : expr Plus term | expr Minus term | term ;
+	// → 演算子ループパターン: term (Plus|Minus term)*
+	input := `%token Eof Number Plus Minus
+%%
+expr : expr Plus term
+     | expr Minus term
+     | term
+     ;
+term : Number ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	op_loops := detect_operator_loops(&g)
+	defer operator_loops_destroy(&op_loops)
+
+	testing.expectf(t, len(op_loops) == 1, "Expected 1 operator loop, got %d", len(op_loops))
+	testing.expect(t, "expr" in op_loops, "Expected 'expr' in operator loops")
+
+	loop := op_loops["expr"]
+	testing.expect(t, loop.base_name == "term", "Expected base_name 'term'")
+	testing.expectf(t, len(loop.operators) == 2, "Expected 2 operators, got %d", len(loop.operators))
+	testing.expectf(t, len(loop.base_prods) == 1, "Expected 1 base prod, got %d", len(loop.base_prods))
+}
+
+@(test)
+analysis_operator_loop_not_detected_test :: proc(t: ^testing.T) {
+	// 左再帰でない文法 → 演算子ループなし
+	input := `%token Eof Number Plus
+%%
+expr : Number Plus Number
+     | Number
+     ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	op_loops := detect_operator_loops(&g)
+	defer operator_loops_destroy(&op_loops)
+
+	testing.expectf(t, len(op_loops) == 0, "Expected no operator loops, got %d", len(op_loops))
+}
+
+@(test)
+analysis_operator_loop_with_epsilon_test :: proc(t: ^testing.T) {
+	// args : expr | args Comma expr | ;
+	// → 演算子ループ: expr (Comma expr)* (ε ベースケースあり)
+	input := `%token Eof Number Comma
+%%
+args : expr
+     | args Comma expr
+     |
+     ;
+expr : Number ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	op_loops := detect_operator_loops(&g)
+	defer operator_loops_destroy(&op_loops)
+
+	testing.expectf(t, len(op_loops) == 1, "Expected 1 operator loop, got %d", len(op_loops))
+	testing.expect(t, "args" in op_loops, "Expected 'args' in operator loops")
+	testing.expectf(t, len(op_loops["args"].base_prods) == 2, "Expected 2 base prods (expr + ε), got %d", len(op_loops["args"].base_prods))
+}
+
+@(test)
+analysis_operator_loop_states_test :: proc(t: ^testing.T) {
+	// 演算子ループ規則は A, A_Op の2状態のみ
+	input := `%token Eof Number Plus Minus
+%%
+expr : expr Plus term
+     | expr Minus term
+     | term
+     ;
+term : Number ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	op_loops := detect_operator_loops(&g)
+	defer operator_loops_destroy(&op_loops)
+
+	states := generate_states(&g, &op_loops)
+	defer states_destroy(&states)
+
+	// expr: Expr, Expr_Op (2 states)
+	// term: Term (1 state, single terminal production)
+	testing.expectf(t, len(states) == 3, "Expected 3 states, got %d", len(states))
+
+	found_expr := false
+	found_expr_op := false
+	found_term := false
+	for &s in states {
+		if s.name == "Expr" { found_expr = true }
+		if s.name == "Expr_Op" { found_expr_op = true }
+		if s.name == "Term" { found_term = true }
+	}
+	testing.expect(t, found_expr, "Expected 'Expr' state")
+	testing.expect(t, found_expr_op, "Expected 'Expr_Op' state")
+	testing.expect(t, found_term, "Expected 'Term' state")
+}
+
+@(test)
+analysis_operator_loop_invalid_pattern_test :: proc(t: ^testing.T) {
+	// A : A B C D | B ; (左再帰だが4シンボルなので演算子ループではない)
+	input := `%token Eof Number Plus Minus
+%%
+expr : expr Plus Number Minus
+     | Number
+     ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	op_loops := detect_operator_loops(&g)
+	defer operator_loops_destroy(&op_loops)
+
+	testing.expectf(t, len(op_loops) == 0, "Expected no operator loops for 4-symbol production, got %d", len(op_loops))
+}
+
+// ========================================================================
 // 統合テスト: parse → build_indices → first → follow → conflicts → states
 // ========================================================================
 
@@ -612,12 +744,17 @@ args : expr
 		delete(follows)
 	}
 
-	conflicts := check_ll1_conflicts(&g, firsts, follows)
-	defer delete(conflicts)
-	// 左再帰があるので衝突は0ではない
-	testing.expectf(t, len(conflicts) > 0, "Expected conflicts for left-recursive grammar, got %d", len(conflicts))
+	// 演算子ループ検出
+	op_loops := detect_operator_loops(&g)
+	defer operator_loops_destroy(&op_loops)
+	testing.expectf(t, len(op_loops) == 3, "Expected 3 operator loops, got %d", len(op_loops))
 
-	states := generate_states(&g)
+	conflicts := check_ll1_conflicts(&g, firsts, follows, &op_loops)
+	defer delete(conflicts)
+	// 演算子ループ規則をスキップするので衝突は 0 になる可能性がある
+	// (factor は左再帰でないので衝突がない)
+
+	states := generate_states(&g, &op_loops)
 	defer states_destroy(&states)
 	testing.expectf(t, len(states) > 0, "Expected some states, got %d", len(states))
 

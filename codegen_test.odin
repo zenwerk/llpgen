@@ -13,15 +13,17 @@ generate_code_from_input :: proc(input: string) -> (string, bool) {
 	}
 	grammar_build_indices(&g)
 
+	op_loops := detect_operator_loops(&g)
 	firsts := compute_first_sets(&g)
 	follows := compute_follow_sets(&g, firsts)
-	states := generate_states(&g)
+	states := generate_states(&g, &op_loops)
 
 	ci := Codegen_Input{
-		grammar = &g,
-		firsts  = &firsts,
-		follows = &follows,
-		states  = &states,
+		grammar  = &g,
+		firsts   = &firsts,
+		follows  = &follows,
+		states   = &states,
+		op_loops = &op_loops,
 	}
 
 	code := codegen(ci)
@@ -37,6 +39,7 @@ generate_code_from_input :: proc(input: string) -> (string, bool) {
 	}
 	delete(follows)
 	states_destroy(&states)
+	operator_loops_destroy(&op_loops)
 
 	return code, true
 }
@@ -143,8 +146,8 @@ args : expr
 	testing.expect(t, strings.contains(code, "parse_factor :: proc"), "Expected parse_factor")
 	testing.expect(t, strings.contains(code, "parse_args :: proc"), "Expected parse_args")
 
-	// ε production のハンドリング (args)
-	testing.expect(t, strings.contains(code, "ε production"), "Expected ε production handling in args")
+	// args は演算子ループとして変換される
+	testing.expect(t, strings.contains(code, "parse_args :: proc"), "Expected parse_args function")
 
 	// ディスパッチに各規則が含まれる
 	testing.expect(t, strings.contains(code, "parse_start(p, &tk)"), "Expected parse_start dispatch")
@@ -339,4 +342,92 @@ expr : Number ;
 
 	// consumed は常に生成される
 	testing.expect(t, strings.contains(code, "consumed :: proc"), "Expected consumed function")
+}
+
+// ========================================================================
+// 演算子ループ codegen テスト
+// ========================================================================
+
+@(test)
+codegen_operator_loop_test :: proc(t: ^testing.T) {
+	input := `%package calc
+%token Eof Error Number Plus Minus Asterisk Slash
+%left Plus Minus
+%left Asterisk Slash
+%%
+expr : expr Plus term
+     | expr Minus term
+     | term
+     ;
+term : term Asterisk factor
+     | term Slash factor
+     | factor
+     ;
+factor : Number ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+
+	testing.expectf(t, ok, "Expected codegen success")
+
+	// 演算子ループ規則の関数が生成されている
+	testing.expect(t, strings.contains(code, "parse_expr :: proc"), "Expected parse_expr")
+	testing.expect(t, strings.contains(code, "parse_term :: proc"), "Expected parse_term")
+
+	// Expr_Op, Term_Op 状態が生成されている
+	testing.expect(t, strings.contains(code, "Expr_Op,"), "Expected Expr_Op state")
+	testing.expect(t, strings.contains(code, "Term_Op,"), "Expected Term_Op state")
+
+	// 演算子チェックのコードが含まれている
+	testing.expect(t, strings.contains(code, "tk.type == .Plus"), "Expected Plus operator check")
+	testing.expect(t, strings.contains(code, "tk.type == .Minus"), "Expected Minus operator check")
+	testing.expect(t, strings.contains(code, "tk.type == .Asterisk"), "Expected Asterisk operator check")
+	testing.expect(t, strings.contains(code, "tk.type == .Slash"), "Expected Slash operator check")
+
+	// 演算子ループパターン: 演算子がなければ parser_end
+	testing.expect(t, strings.contains(code, "parser_end(p)"), "Expected parser_end for non-operator")
+
+	// コメントに演算子ループであることが記載されている
+	testing.expect(t, strings.contains(code, "演算子ループ"), "Expected operator loop comment")
+}
+
+@(test)
+codegen_operator_loop_braces_balanced_test :: proc(t: ^testing.T) {
+	input := `%package calc
+%token Eof Error Number Plus Minus Asterisk Slash Left_Paren Right_Paren
+%left Plus Minus
+%left Asterisk Slash
+%%
+expr : expr Plus term
+     | expr Minus term
+     | term
+     ;
+term : term Asterisk factor
+     | term Slash factor
+     | factor
+     ;
+factor : Number
+       | Left_Paren expr Right_Paren
+       ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+
+	testing.expectf(t, ok, "Expected codegen success")
+
+	// 中括弧のバランスチェック
+	brace_count := 0
+	for ch in code {
+		if ch == '{' { brace_count += 1 }
+		if ch == '}' { brace_count -= 1 }
+	}
+	testing.expectf(t, brace_count == 0, "Unbalanced braces: count=%d", brace_count)
+
+	// パーレンのバランスチェック
+	paren_count := 0
+	for ch in code {
+		if ch == '(' { paren_count += 1 }
+		if ch == ')' { paren_count -= 1 }
+	}
+	testing.expectf(t, paren_count == 0, "Unbalanced parens: count=%d", paren_count)
 }

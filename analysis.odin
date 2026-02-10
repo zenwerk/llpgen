@@ -20,6 +20,15 @@ Ll1_Conflict :: struct {
 	token:     string, // 衝突するトークン
 }
 
+// 演算子ループ変換情報
+// A : A op1 B | A op2 B | ... | B パターンを表現
+Operator_Loop :: struct {
+	rule_name:   string,           // 変換対象の規則名 (例: "expr")
+	base_name:   string,           // ベースケースの非終端記号名 (例: "term")
+	operators:   [dynamic]string,  // 演算子トークン名リスト (例: {"Plus", "Minus"})
+	base_prods:  [dynamic]int,     // ベースケース production のインデックス
+}
+
 // Push Parser 状態
 Gen_State :: struct {
 	name: string, // 状態名 (Parse_State_Kind のメンバー名)
@@ -119,6 +128,115 @@ check_left_recursion :: proc(g: ^Grammar) -> [dynamic]Left_Recursion {
 	}
 
 	return results
+}
+
+// ========================================================================
+// 3.1a-3: 演算子ループパターンの検出
+// ========================================================================
+
+// A : A op1 B | A op2 B | ... | B パターンを検出する
+// grammar_build_indices() の後に呼ぶこと
+// 返り値: 規則名 → Operator_Loop のマップ
+detect_operator_loops :: proc(g: ^Grammar) -> map[string]Operator_Loop {
+	result: map[string]Operator_Loop
+
+	for &rule in g.rules {
+		loop, ok := try_detect_operator_loop(g, &rule)
+		if ok {
+			result[rule.name] = loop
+		}
+	}
+
+	return result
+}
+
+operator_loops_destroy :: proc(loops: ^map[string]Operator_Loop) {
+	for _, &v in loops {
+		delete(v.operators)
+		delete(v.base_prods)
+	}
+	delete(loops^)
+}
+
+// 単一の規則が演算子ループパターンに該当するか判定
+@(private = "file")
+try_detect_operator_loop :: proc(g: ^Grammar, rule: ^Rule) -> (Operator_Loop, bool) {
+	operators: [dynamic]string
+	base_prods: [dynamic]int
+	base_name := ""
+
+	for &prod, prod_idx in rule.productions {
+		if len(prod.symbols) == 0 {
+			// ε production → ベースケースとして扱う
+			append(&base_prods, prod_idx)
+			continue
+		}
+
+		first_sym := prod.symbols[0]
+		if first_sym.kind == .Nonterminal && first_sym.name == rule.name {
+			// 左再帰 production: A op B の形か検証
+			// 条件: 3シンボル, 2番目が Terminal, 3番目が Nonterminal
+			if len(prod.symbols) != 3 {
+				// 3シンボルでない左再帰は変換不可
+				delete(operators)
+				delete(base_prods)
+				return {}, false
+			}
+			if prod.symbols[1].kind != .Terminal {
+				// 2番目が Terminal でない
+				delete(operators)
+				delete(base_prods)
+				return {}, false
+			}
+			if prod.symbols[2].kind != .Nonterminal {
+				// 3番目が Nonterminal でない
+				delete(operators)
+				delete(base_prods)
+				return {}, false
+			}
+			// 全左再帰 production のベース (3番目) は同じ非終端記号であること
+			rhs_name := prod.symbols[2].name
+			if base_name == "" {
+				base_name = rhs_name
+			} else if base_name != rhs_name {
+				// 右辺の非終端記号が一致しない
+				delete(operators)
+				delete(base_prods)
+				return {}, false
+			}
+			append(&operators, prod.symbols[1].name)
+		} else {
+			// 非左再帰 production → ベースケース
+			// ベースケースは「単一の非終端記号」であるのが理想
+			// (例: term, factor)
+			// ただし、任意のベースケースも許容する
+			append(&base_prods, prod_idx)
+		}
+	}
+
+	// 条件チェック: 演算子が1つ以上、ベースケースが1つ以上
+	if len(operators) == 0 || len(base_prods) == 0 {
+		delete(operators)
+		delete(base_prods)
+		return {}, false
+	}
+
+	// ベースケースが単一の非終端記号 (例: | term ;) かチェック
+	// 複数のベースケースがある場合もOK（通常のproduction分岐として処理）
+	// ただし、base_name が未確定の場合はベースケースから推定
+	if base_name == "" {
+		// 左再帰productionがない場合 (ここには来ないはず)
+		delete(operators)
+		delete(base_prods)
+		return {}, false
+	}
+
+	return Operator_Loop{
+		rule_name   = rule.name,
+		base_name   = base_name,
+		operators   = operators,
+		base_prods  = base_prods,
+	}, true
 }
 
 // ========================================================================
@@ -303,10 +421,14 @@ compute_follow_sets :: proc(g: ^Grammar, firsts: First_Sets) -> Follow_Sets {
 // 3.1d: LL(1) 衝突検出
 // ========================================================================
 
-check_ll1_conflicts :: proc(g: ^Grammar, firsts: First_Sets, follows: Follow_Sets) -> [dynamic]Ll1_Conflict {
+check_ll1_conflicts :: proc(g: ^Grammar, firsts: First_Sets, follows: Follow_Sets, op_loops: ^map[string]Operator_Loop = nil) -> [dynamic]Ll1_Conflict {
 	conflicts: [dynamic]Ll1_Conflict
 
 	for &rule in g.rules {
+		// 演算子ループ変換された規則はスキップ
+		if op_loops != nil && rule.name in op_loops^ {
+			continue
+		}
 		prods_count := len(rule.productions)
 		if prods_count < 2 {
 			continue
@@ -408,12 +530,33 @@ to_pascal_case :: proc(name: string, allocator := context.allocator) -> string {
 	return strings.clone(string(buf[:]), allocator)
 }
 
-generate_states :: proc(g: ^Grammar, allocator := context.allocator) -> [dynamic]Gen_State {
+generate_states :: proc(g: ^Grammar, op_loops: ^map[string]Operator_Loop = nil, allocator := context.allocator) -> [dynamic]Gen_State {
 	states: [dynamic]Gen_State
 
 	for &rule in g.rules {
-		// 規則の開始状態
 		rule_pascal := to_pascal_case(rule.name, context.temp_allocator)
+
+		// 演算子ループ規則の場合: A, A_Op の2状態のみ生成
+		if op_loops != nil && rule.name in op_loops^ {
+			// 開始状態: A (pos=0)
+			append(&states, Gen_State{
+				name = strings.clone(rule_pascal, allocator),
+				rule = rule.name,
+				prod = 0,
+				pos  = 0,
+			})
+			// 演算子待ち状態: A_Op (pos=1, special marker)
+			op_state_name := fmt.tprintf("%s_Op", rule_pascal)
+			append(&states, Gen_State{
+				name = strings.clone(op_state_name, allocator),
+				rule = rule.name,
+				prod = -1, // -1 は演算子ループの Op 状態を示す特殊マーカー
+				pos  = 1,
+			})
+			continue
+		}
+
+		// 通常の規則: 規則の開始状態
 		append(&states, Gen_State{
 			name = strings.clone(rule_pascal, allocator),
 			rule = rule.name,

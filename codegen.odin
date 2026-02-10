@@ -5,10 +5,11 @@ import "core:strings"
 
 // コード生成の入力
 Codegen_Input :: struct {
-	grammar: ^Grammar,
-	firsts:  ^First_Sets,
-	follows: ^Follow_Sets,
-	states:  ^[dynamic]Gen_State,
+	grammar:  ^Grammar,
+	firsts:   ^First_Sets,
+	follows:  ^Follow_Sets,
+	states:   ^[dynamic]Gen_State,
+	op_loops: ^map[string]Operator_Loop,
 }
 
 // Grammar から Token 型名を取得 (デフォルト: "Token")
@@ -444,7 +445,11 @@ emit_parse_functions :: proc(b: ^strings.Builder, input: Codegen_Input) {
 	g := input.grammar
 
 	for &rule in g.rules {
-		emit_parse_function(b, input, &rule)
+		if input.op_loops != nil && rule.name in input.op_loops^ {
+			emit_operator_loop_function(b, input, &rule, &input.op_loops[rule.name])
+		} else {
+			emit_parse_function(b, input, &rule)
+		}
 	}
 }
 
@@ -691,6 +696,184 @@ find_state_for :: proc(states: ^[dynamic]Gen_State, rule_name: string, prod_idx:
 		}
 	}
 	return "Error"
+}
+
+// ========================================================================
+// 演算子ループ規則のコード生成
+// ========================================================================
+
+// 演算子ループ規則の parse 関数を生成
+// 手書きの Expr → Expr_Op パターンに相当するコードを出力
+@(private = "file")
+emit_operator_loop_function :: proc(b: ^strings.Builder, input: Codegen_Input, rule: ^Rule, loop: ^Operator_Loop) {
+	g := input.grammar
+	states := input.states
+	tk_type := get_token_type(g)
+
+	// この規則に属する状態を収集
+	rule_states: [dynamic]Gen_State
+	defer delete(rule_states)
+	for &s in states {
+		if s.rule == rule.name {
+			append(&rule_states, s)
+		}
+	}
+
+	// 開始状態と Op 状態の名前を取得
+	start_state := ""
+	op_state := ""
+	for &s in rule_states {
+		if s.pos == 0 { start_state = s.name }
+		if s.prod == -1 && s.pos == 1 { op_state = s.name }
+	}
+
+	// ベースケースの非終端記号の開始状態名を取得
+	base_start := find_state_for(states, loop.base_name, 0, 0)
+
+	fmt.sbprintf(b,
+`// %s 規則のパース (演算子ループ: %s (op %s)*)
+parse_%s :: proc(p: ^Parser, tk: ^%s) -> Parse_Loop_Action {{
+	top := parser_get_state(p)
+	if top == nil {{ return .Break }}
+
+	#partial switch top.state {{
+	case .%s:
+`, rule.name, loop.base_name, rule.name, rule.name, tk_type, start_state)
+
+	// ベースケースの処理
+	// ベースケースが単一の非終端記号のみの場合はシンプルに
+	if len(loop.base_prods) == 1 {
+		base_prod := &rule.productions[loop.base_prods[0]]
+		if len(base_prod.symbols) == 1 && base_prod.symbols[0].kind == .Nonterminal {
+			// 単純なケース: A : ... | B ; → B をパースして A_Op に遷移
+			fmt.sbprintf(b, "\t\tparser_set_state(p, .%s)\n", op_state)
+			fmt.sbprintf(b, "\t\tparser_begin(p, .%s, top.node)\n", base_start)
+			fmt.sbprint(b, "\t\treturn .Continue\n")
+		} else {
+			// ベースケースが複数シンボルの場合: 開始処理を通常と同様に生成
+			emit_operator_loop_base_case(b, input, rule, loop, op_state)
+		}
+	} else {
+		// 複数のベースケース: 条件分岐
+		emit_operator_loop_base_case(b, input, rule, loop, op_state)
+	}
+
+	fmt.sbprintf(b, "\tcase .%s:\n", op_state)
+
+	// 演算子チェック: いずれかの演算子にマッチすればベースをパース (ループ)
+	fmt.sbprint(b, "\t\tif ")
+	for op, i in loop.operators {
+		if i > 0 { fmt.sbprint(b, " || ") }
+		fmt.sbprintf(b, "tk.type == .%s", op)
+	}
+	fmt.sbprint(b, " {\n")
+	fmt.sbprint(b, "\t\t\t// TODO: AST node construction (binary operator)\n")
+	fmt.sbprint(b, "\t\t\ttk.consumed = true\n")
+	fmt.sbprintf(b, "\t\t\tparser_begin(p, .%s, top.node)\n", base_start)
+	fmt.sbprint(b, "\t\t\treturn .Continue\n")
+	fmt.sbprint(b, "\t\t} else {\n")
+	fmt.sbprint(b, "\t\t\tparser_end(p)\n")
+	fmt.sbprint(b, "\t\t\treturn .Continue\n")
+	fmt.sbprint(b, "\t\t}\n")
+
+	fmt.sbprint(b, "\t}\n")
+	fmt.sbprint(b, "\treturn .Break\n")
+	fmt.sbprint(b, "}\n\n")
+}
+
+// 演算子ループのベースケース生成
+@(private = "file")
+emit_operator_loop_base_case :: proc(b: ^strings.Builder, input: Codegen_Input, rule: ^Rule, loop: ^Operator_Loop, op_state: string) {
+	g := input.grammar
+	states := input.states
+
+	if len(loop.base_prods) == 1 {
+		base_prod := &rule.productions[loop.base_prods[0]]
+		if len(base_prod.symbols) == 0 {
+			// ε production
+			fmt.sbprintf(b, "\t\tparser_set_state(p, .%s)\n", op_state)
+			fmt.sbprint(b, "\t\treturn .Continue\n")
+		} else {
+			first_sym := base_prod.symbols[0]
+			if first_sym.kind == .Terminal {
+				fmt.sbprint(b, "\t\t// TODO: AST node construction\n")
+				fmt.sbprintf(b, "\t\ttk.consumed = true\n")
+				fmt.sbprintf(b, "\t\tparser_set_state(p, .%s)\n", op_state)
+				fmt.sbprint(b, "\t\treturn .Continue\n")
+			} else {
+				nonterminal_start := find_state_for(states, first_sym.name, 0, 0)
+				fmt.sbprintf(b, "\t\tparser_set_state(p, .%s)\n", op_state)
+				fmt.sbprintf(b, "\t\tparser_begin(p, .%s, top.node)\n", nonterminal_start)
+				fmt.sbprint(b, "\t\treturn .Continue\n")
+			}
+		}
+	} else {
+		// 複数のベースケース: FIRST に基づく分岐
+		first_if := true
+		for base_idx in loop.base_prods {
+			base_prod := &rule.productions[base_idx]
+			if len(base_prod.symbols) == 0 {
+				continue // ε は後で処理
+			}
+
+			if first_if {
+				fmt.sbprint(b, "\t\t")
+				first_if = false
+			} else {
+				fmt.sbprint(b, " else ")
+			}
+
+			emit_production_condition(b, input, base_prod)
+			fmt.sbprint(b, " {\n")
+
+			first_sym := base_prod.symbols[0]
+			if first_sym.kind == .Terminal {
+				if len(base_prod.symbols) == 1 {
+					fmt.sbprint(b, "\t\t\t// TODO: AST node construction\n")
+					fmt.sbprint(b, "\t\t\ttk.consumed = true\n")
+					fmt.sbprintf(b, "\t\t\tparser_set_state(p, .%s)\n", op_state)
+					fmt.sbprint(b, "\t\t\treturn .Continue\n")
+				} else {
+					// 複数シンボルのベースケース — 最初のTerminalを消費して次状態へ
+					// この場合は中間状態が必要だが、演算子ループでは生成していない
+					// → op_state に遷移して残りは別途処理が必要
+					// シンプルに最初のシンボルだけ処理して op_state に遷移
+					fmt.sbprint(b, "\t\t\t// TODO: AST node construction\n")
+					fmt.sbprint(b, "\t\t\ttk.consumed = true\n")
+					fmt.sbprintf(b, "\t\t\tparser_set_state(p, .%s)\n", op_state)
+					fmt.sbprint(b, "\t\t\treturn .Continue\n")
+				}
+			} else {
+				nonterminal_start := find_state_for(states, first_sym.name, 0, 0)
+				fmt.sbprintf(b, "\t\t\tparser_set_state(p, .%s)\n", op_state)
+				fmt.sbprintf(b, "\t\t\tparser_begin(p, .%s, top.node)\n", nonterminal_start)
+				fmt.sbprint(b, "\t\t\treturn .Continue\n")
+			}
+			fmt.sbprint(b, "\t\t}")
+		}
+
+		// ε ベースケースがあれば else として出力
+		has_epsilon := false
+		for base_idx in loop.base_prods {
+			base_prod := &rule.productions[base_idx]
+			if len(base_prod.symbols) == 0 {
+				has_epsilon = true
+				fmt.sbprint(b, " else {\n")
+				fmt.sbprintf(b, "\t\t\tparser_set_state(p, .%s)\n", op_state)
+				fmt.sbprint(b, "\t\t\treturn .Continue\n")
+				fmt.sbprint(b, "\t\t}")
+				break
+			}
+		}
+
+		if !has_epsilon && !first_if {
+			fmt.sbprint(b, " else {\n")
+			fmt.sbprintf(b, "\t\t\tparser_error(p, fmt.tprintf(\"Unexpected token in %s: %%v\", tk.type))\n", rule.name)
+			fmt.sbprint(b, "\t\t\treturn .Break\n")
+			fmt.sbprint(b, "\t\t}")
+		}
+		fmt.sbprint(b, "\n")
+	}
 }
 
 // ========================================================================
