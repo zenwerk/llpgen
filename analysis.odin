@@ -89,6 +89,39 @@ grammar_build_indices :: proc(g: ^Grammar) {
 }
 
 // ========================================================================
+// 3.1a-2: 直接左再帰の検出
+// ========================================================================
+
+// 左再帰情報
+Left_Recursion :: struct {
+	rule_name: string,
+	prod_idx:  int, // 左再帰している production のインデックス
+}
+
+// 直接左再帰を検出する (A : A ... 形式)
+// grammar_build_indices() の後に呼ぶこと
+check_left_recursion :: proc(g: ^Grammar) -> [dynamic]Left_Recursion {
+	results: [dynamic]Left_Recursion
+
+	for &rule in g.rules {
+		for &prod, prod_idx in rule.productions {
+			if len(prod.symbols) == 0 {
+				continue
+			}
+			first_sym := prod.symbols[0]
+			if first_sym.kind == .Nonterminal && first_sym.name == rule.name {
+				append(&results, Left_Recursion{
+					rule_name = rule.name,
+					prod_idx  = prod_idx,
+				})
+			}
+		}
+	}
+
+	return results
+}
+
+// ========================================================================
 // 3.1b: FIRST 集合の計算
 // ========================================================================
 

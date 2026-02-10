@@ -33,6 +33,31 @@ main :: proc() {
 	// 3. grammar_build_indices() でインデックス構築
 	grammar_build_indices(&g)
 
+	// 3.5. 直接左再帰の検出 (エラー)
+	left_recs := check_left_recursion(&g)
+	defer delete(left_recs)
+	if len(left_recs) > 0 {
+		fmt.eprintfln("Error: %d direct left recursion(s) detected:", len(left_recs))
+		for &lr in left_recs {
+			rule, _ := grammar_find_rule(&g, lr.rule_name)
+			prod := &rule.productions[lr.prod_idx]
+			// production のシンボル列を表示
+			sym_buf: strings.Builder
+			strings.builder_init(&sym_buf, context.temp_allocator)
+			for &sym, i in prod.symbols {
+				if i > 0 { fmt.sbprint(&sym_buf, " ") }
+				fmt.sbprint(&sym_buf, sym.name)
+			}
+			fmt.eprintfln("  rule '%s' production %d: %s",
+				lr.rule_name, lr.prod_idx, strings.to_string(sym_buf))
+		}
+		fmt.eprintln("  LL parsers cannot handle left recursion.")
+		fmt.eprintln("  Rewrite using right recursion or iteration, e.g.:")
+		fmt.eprintln("    expr : term expr_tail ;")
+		fmt.eprintln("    expr_tail : Plus term expr_tail | ;")
+		os.exit(1)
+	}
+
 	// 4. compute_first_sets(), compute_follow_sets() でFIRST/FOLLOW集合を計算
 	firsts := compute_first_sets(&g)
 	defer {

@@ -471,6 +471,101 @@ expr : expr Plus expr ;
 }
 
 // ========================================================================
+// 3.1a-2: 直接左再帰の検出テスト
+// ========================================================================
+
+@(test)
+analysis_left_recursion_detected_test :: proc(t: ^testing.T) {
+	// expr : expr Plus term | term ; は直接左再帰
+	input := `%token Eof Number Plus
+%%
+expr : expr Plus term
+     | term
+     ;
+term : Number ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	left_recs := check_left_recursion(&g)
+	defer delete(left_recs)
+
+	testing.expectf(t, len(left_recs) == 1, "Expected 1 left recursion, got %d", len(left_recs))
+	testing.expect(t, left_recs[0].rule_name == "expr", "Expected left recursion in 'expr'")
+	testing.expectf(t, left_recs[0].prod_idx == 0, "Expected prod_idx 0, got %d", left_recs[0].prod_idx)
+}
+
+@(test)
+analysis_left_recursion_multiple_test :: proc(t: ^testing.T) {
+	// expr と term の両方に左再帰
+	input := `%token Eof Number Plus Asterisk
+%%
+expr : expr Plus term
+     | term
+     ;
+term : term Asterisk Number
+     | Number
+     ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	left_recs := check_left_recursion(&g)
+	defer delete(left_recs)
+
+	testing.expectf(t, len(left_recs) == 2, "Expected 2 left recursions, got %d", len(left_recs))
+
+	found_expr := false
+	found_term := false
+	for &lr in left_recs {
+		if lr.rule_name == "expr" { found_expr = true }
+		if lr.rule_name == "term" { found_term = true }
+	}
+	testing.expect(t, found_expr, "Expected left recursion in 'expr'")
+	testing.expect(t, found_term, "Expected left recursion in 'term'")
+}
+
+@(test)
+analysis_no_left_recursion_test :: proc(t: ^testing.T) {
+	// 左再帰のない文法
+	input := `%token Eof Number Plus
+%%
+expr : Number Plus Number
+     | Number
+     ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	left_recs := check_left_recursion(&g)
+	defer delete(left_recs)
+
+	testing.expectf(t, len(left_recs) == 0, "Expected no left recursion, got %d", len(left_recs))
+}
+
+@(test)
+analysis_left_recursion_epsilon_safe_test :: proc(t: ^testing.T) {
+	// ε production は左再帰ではない
+	input := `%token Eof Number
+%%
+args : Number
+     |
+     ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	left_recs := check_left_recursion(&g)
+	defer delete(left_recs)
+
+	testing.expectf(t, len(left_recs) == 0, "Expected no left recursion for epsilon, got %d", len(left_recs))
+}
+
+// ========================================================================
 // 統合テスト: parse → build_indices → first → follow → conflicts → states
 // ========================================================================
 
