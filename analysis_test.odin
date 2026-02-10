@@ -394,12 +394,10 @@ term : Number ;
 	states := generate_states(&g)
 	defer states_destroy(&states)
 
-	// 期待: Term (開始), Term_After_Number (pos=1)
-	testing.expectf(t, len(states) == 2, "Expected 2 states, got %d", len(states))
+	// 期待: Term (開始) のみ — 1シンボル production は末尾状態を生成しない
+	testing.expectf(t, len(states) == 1, "Expected 1 state, got %d", len(states))
 	testing.expectf(t, states[0].name == "Term", "Expected 'Term', got '%s'", states[0].name)
 	testing.expectf(t, states[0].pos == 0, "Expected pos 0, got %d", states[0].pos)
-	testing.expectf(t, states[1].name == "Term_After_Number", "Expected 'Term_After_Number', got '%s'", states[1].name)
-	testing.expectf(t, states[1].pos == 1, "Expected pos 1, got %d", states[1].pos)
 }
 
 @(test)

@@ -422,8 +422,10 @@ generate_states :: proc(g: ^Grammar, allocator := context.allocator) -> [dynamic
 		})
 
 		// 各 production の各ドット位置に対して中間状態を生成
+		// 末尾位置 (pos == len(symbols)) は生成しない
+		// → 最終シンボル処理時に直接 parser_end() を呼ぶため不要
 		for &prod, prod_idx in rule.productions {
-			for pos := 1; pos <= len(prod.symbols); pos += 1 {
+			for pos := 1; pos < len(prod.symbols); pos += 1 {
 				prev_sym := prod.symbols[pos - 1]
 				sym_pascal := to_pascal_case(prev_sym.name, context.temp_allocator)
 				state_name := fmt.tprintf("%s_After_%s", rule_pascal, sym_pascal)

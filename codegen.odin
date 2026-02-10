@@ -640,15 +640,6 @@ emit_intermediate_case :: proc(b: ^strings.Builder, input: Codegen_Input, rule: 
 
 	fmt.sbprintf(b, "\tcase .%s:\n", state.name)
 
-	// この状態の位置のシンボルを取得
-	if state.pos >= len(prod.symbols) {
-		// production 終了: 規則完了
-		fmt.sbprint(b, "\t\t// production 完了\n")
-		fmt.sbprint(b, "\t\tparser_end(p)\n")
-		fmt.sbprint(b, "\t\treturn .Continue\n")
-		return
-	}
-
 	sym := prod.symbols[state.pos]
 	is_last := (state.pos == len(prod.symbols) - 1)
 
