@@ -554,3 +554,144 @@ expr : Number ;
 	// #partial switch が使われている
 	testing.expect(t, strings.contains(code, "#partial switch pstate"), "Expected #partial switch dispatch")
 }
+
+// ========================================================================
+// Phase AST Builder: Parse_Event + on_parse_event テスト
+// ========================================================================
+
+@(test)
+codegen_parse_event_enum_test :: proc(t: ^testing.T) {
+	input := `%package calc
+%token Eof Error Number Ident Plus Minus Asterisk Slash Left_Paren Right_Paren Comma
+%left Plus Minus
+%left Asterisk Slash
+%%
+expr : expr Plus term
+     | expr Minus term
+     | term
+     ;
+term : term Asterisk factor
+     | term Slash factor
+     | factor
+     ;
+factor : Number
+       | Ident Left_Paren args Right_Paren
+       | Left_Paren expr Right_Paren
+       | Minus factor
+       ;
+args : expr
+     | args Comma expr
+     |
+     ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+
+	testing.expectf(t, ok, "Expected codegen success")
+
+	// Parse_Event enum が生成されている
+	testing.expect(t, strings.contains(code, "Parse_Event :: enum"), "Expected Parse_Event enum")
+	testing.expect(t, strings.contains(code, "None,"), "Expected None event")
+
+	// 演算子ループイベント
+	testing.expect(t, strings.contains(code, "Expr_Operator,"), "Expected Expr_Operator event")
+	testing.expect(t, strings.contains(code, "Term_Operator,"), "Expected Term_Operator event")
+	testing.expect(t, strings.contains(code, "Args_Operator,"), "Expected Args_Operator event")
+
+	// factor の開始状態イベント
+	testing.expect(t, strings.contains(code, "Factor_Number,"), "Expected Factor_Number event")
+	testing.expect(t, strings.contains(code, "Factor_Ident,"), "Expected Factor_Ident event")
+	testing.expect(t, strings.contains(code, "Factor_Left_Paren,"), "Expected Factor_Left_Paren event")
+	testing.expect(t, strings.contains(code, "Factor_Minus,"), "Expected Factor_Minus event")
+
+	// factor の中間状態イベント
+	testing.expect(t, strings.contains(code, "Factor_Await_Left_Paren,"), "Expected Factor_Await_Left_Paren event")
+	testing.expect(t, strings.contains(code, "Factor_Await_Right_Paren,"), "Expected Factor_Await_Right_Paren event")
+	testing.expect(t, strings.contains(code, "Factor_Await_Right_Paren_2,"), "Expected Factor_Await_Right_Paren_2 event")
+}
+
+@(test)
+codegen_on_parse_event_call_test :: proc(t: ^testing.T) {
+	input := `%package test_pkg
+%token Eof Number Plus Minus
+%left Plus Minus
+%%
+expr : expr Plus term
+     | expr Minus term
+     | term
+     ;
+term : Number ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+
+	testing.expectf(t, ok, "Expected codegen success")
+
+	// on_parse_event 呼び出しが生成されている
+	testing.expect(t, strings.contains(code, "on_parse_event(p, .Expr_Operator, tk, top)"), "Expected Expr_Operator event call")
+	testing.expect(t, strings.contains(code, "on_parse_event(p, .Term_Number, tk, top)"), "Expected Term_Number event call")
+}
+
+@(test)
+codegen_no_todo_comment_test :: proc(t: ^testing.T) {
+	input := `%package calc
+%token Eof Error Number Ident Plus Minus Asterisk Slash Left_Paren Right_Paren Comma
+%left Plus Minus
+%left Asterisk Slash
+%%
+expr : expr Plus term
+     | expr Minus term
+     | term
+     ;
+term : term Asterisk factor
+     | term Slash factor
+     | factor
+     ;
+factor : Number
+       | Ident Left_Paren args Right_Paren
+       | Left_Paren expr Right_Paren
+       | Minus factor
+       ;
+args : expr
+     | args Comma expr
+     |
+     ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+
+	testing.expectf(t, ok, "Expected codegen success")
+
+	// TODO: AST コメントが生成されていない
+	testing.expect(t, !strings.contains(code, "// TODO: AST"), "TODO AST comments should not be in generated code")
+}
+
+@(test)
+codegen_event_operator_loop_test :: proc(t: ^testing.T) {
+	input := `%package test_pkg
+%token Eof Number Plus Minus Asterisk Slash
+%left Plus Minus
+%left Asterisk Slash
+%%
+expr : expr Plus term
+     | expr Minus term
+     | term
+     ;
+term : term Asterisk factor
+     | term Slash factor
+     | factor
+     ;
+factor : Number ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+
+	testing.expectf(t, ok, "Expected codegen success")
+
+	// 演算子ループのイベント呼び出し
+	testing.expect(t, strings.contains(code, "on_parse_event(p, .Expr_Operator, tk, top)"), "Expected Expr_Operator call")
+	testing.expect(t, strings.contains(code, "on_parse_event(p, .Term_Operator, tk, top)"), "Expected Term_Operator call")
+
+	// factor の開始状態イベント
+	testing.expect(t, strings.contains(code, "on_parse_event(p, .Factor_Number, tk, top)"), "Expected Factor_Number call")
+}
