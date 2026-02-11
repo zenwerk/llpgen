@@ -689,9 +689,9 @@ emit_production_body :: proc(b: ^strings.Builder, input: Codegen_Input, rule: ^R
 
 	first_sym := prod.symbols[0]
 
-	fmt.sbprintf(b, "%s// TODO: AST node construction\n", indent)
-
 	if first_sym.kind == .Terminal {
+		ev := event_name_for_match(rule.name, first_sym.name)
+		fmt.sbprintf(b, "%son_parse_event(p, .%s, tk, top)\n", indent, ev)
 		fmt.sbprintf(b, "%stk.consumed = true\n", indent)
 		if len(prod.symbols) == 1 {
 			// 単一 Terminal → parse_end
@@ -776,7 +776,7 @@ emit_intermediate_case :: proc(b: ^strings.Builder, input: Codegen_Input, rule: 
 
 	// Phase 4: 中間状態は常に Terminal 位置 (Nonterminal 位置は通過状態としてスキップ済み)
 	fmt.sbprintf(b, "\t\tif consumed(tk, .%s) {{\n", sym.name)
-	fmt.sbprint(b, "\t\t\t// TODO: AST node construction\n")
+	fmt.sbprintf(b, "\t\t\ton_parse_event(p, .%s, tk, top)\n", state.name)
 	emit_transition_after_pos(b, input, rule, state.prod, state.pos, "\t\t\t")
 	fmt.sbprint(b, "\t\t} else {\n")
 	fmt.sbprintf(b, "\t\t\tparser_error(p, fmt.tprintf(\"Expected %s, got %%v\", tk.type))\n", sym.name)
@@ -883,8 +883,9 @@ parse_%s :: proc(p: ^Parser, tk: ^%s) -> Parse_Loop_Action {{
 		if i > 0 { fmt.sbprint(b, " || ") }
 		fmt.sbprintf(b, "tk.type == .%s", op)
 	}
+	ev := event_name_for_operator(rule.name)
 	fmt.sbprint(b, " {\n")
-	fmt.sbprint(b, "\t\t\t// TODO: AST node construction (binary operator)\n")
+	fmt.sbprintf(b, "\t\t\ton_parse_event(p, .%s, tk, top)\n", ev)
 	fmt.sbprint(b, "\t\t\ttk.consumed = true\n")
 	fmt.sbprintf(b, "\t\t\tparser_begin(p, .%s, top.node)\n", base_start)
 	fmt.sbprint(b, "\t\t\treturn .Continue\n")
@@ -913,7 +914,8 @@ emit_operator_loop_base_case :: proc(b: ^strings.Builder, input: Codegen_Input, 
 		} else {
 			first_sym := base_prod.symbols[0]
 			if first_sym.kind == .Terminal {
-				fmt.sbprint(b, "\t\t// TODO: AST node construction\n")
+				ev := event_name_for_match(rule.name, first_sym.name)
+				fmt.sbprintf(b, "\t\ton_parse_event(p, .%s, tk, top)\n", ev)
 				fmt.sbprintf(b, "\t\ttk.consumed = true\n")
 				fmt.sbprintf(b, "\t\tparser_set_state(p, .%s)\n", op_state)
 				fmt.sbprint(b, "\t\treturn .Continue\n")
@@ -945,17 +947,15 @@ emit_operator_loop_base_case :: proc(b: ^strings.Builder, input: Codegen_Input, 
 
 			first_sym := base_prod.symbols[0]
 			if first_sym.kind == .Terminal {
+				ev := event_name_for_match(rule.name, first_sym.name)
 				if len(base_prod.symbols) == 1 {
-					fmt.sbprint(b, "\t\t\t// TODO: AST node construction\n")
+					fmt.sbprintf(b, "\t\t\ton_parse_event(p, .%s, tk, top)\n", ev)
 					fmt.sbprint(b, "\t\t\ttk.consumed = true\n")
 					fmt.sbprintf(b, "\t\t\tparser_set_state(p, .%s)\n", op_state)
 					fmt.sbprint(b, "\t\t\treturn .Continue\n")
 				} else {
 					// 複数シンボルのベースケース — 最初のTerminalを消費して次状態へ
-					// この場合は中間状態が必要だが、演算子ループでは生成していない
-					// → op_state に遷移して残りは別途処理が必要
-					// シンプルに最初のシンボルだけ処理して op_state に遷移
-					fmt.sbprint(b, "\t\t\t// TODO: AST node construction\n")
+					fmt.sbprintf(b, "\t\t\ton_parse_event(p, .%s, tk, top)\n", ev)
 					fmt.sbprint(b, "\t\t\ttk.consumed = true\n")
 					fmt.sbprintf(b, "\t\t\tparser_set_state(p, .%s)\n", op_state)
 					fmt.sbprint(b, "\t\t\treturn .Continue\n")
