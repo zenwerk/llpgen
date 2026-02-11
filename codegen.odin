@@ -90,6 +90,8 @@ import "core:fmt"
 //
 //   %s :: struct {{ ... }}       // AST ノード型
 //   %s(n: ^%s)                  // ノードの再帰的解放
+//   on_parse_event(p: ^Parser, event: Parse_Event, tk: ^Token, top: ^Parse_State)
+//                                // パースイベントハンドラ
 //
 // トークン型は _token.odin に自動生成されます。
 // ========================================================================
