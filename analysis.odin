@@ -502,7 +502,6 @@ check_ll1_conflicts :: proc(g: ^Grammar, firsts: First_Sets, follows: Follow_Set
 
 // 規則名を PascalCase に変換 (例: "topstmt_list" → "Topstmt_List")
 // 返される文字列は呼び出し側が delete で解放する必要がある
-@(private = "file")
 to_pascal_case :: proc(name: string, allocator := context.allocator) -> string {
 	if len(name) == 0 {
 		return ""

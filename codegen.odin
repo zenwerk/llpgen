@@ -59,6 +59,7 @@ codegen :: proc(input: Codegen_Input) -> string {
 
 	emit_header(&b, input.grammar)
 	emit_state_enum(&b, input.states)
+	emit_event_enum(&b, input)
 	emit_common_types(&b, input.grammar)
 	emit_core_functions(&b, input.grammar)
 	emit_push_token(&b, input.grammar, input.states)
@@ -117,6 +118,95 @@ emit_state_enum :: proc(b: ^strings.Builder, states: ^[dynamic]Gen_State) {
 			fmt.sbprintf(b, "\t// -- %s --\n", s.rule)
 		}
 		fmt.sbprintf(b, "\t%s,\n", s.name)
+	}
+
+	fmt.sbprint(b, "}\n\n")
+}
+
+// ========================================================================
+// 4.1a-2: Parse_Event enum (パースイベント種別)
+// ========================================================================
+
+// イベント名導出: 開始状態での Terminal マッチ
+// rule="factor", terminal="Number" → "Factor_Number"
+@(private = "file")
+event_name_for_match :: proc(rule_name, terminal_name: string) -> string {
+	rule_pascal := to_pascal_case(rule_name, context.temp_allocator)
+	return fmt.tprintf("%s_%s", rule_pascal, terminal_name)
+}
+
+// イベント名導出: 演算子ループの演算子マッチ
+// rule="expr" → "Expr_Operator"
+@(private = "file")
+event_name_for_operator :: proc(rule_name: string) -> string {
+	rule_pascal := to_pascal_case(rule_name, context.temp_allocator)
+	return fmt.tprintf("%s_Operator", rule_pascal)
+}
+
+@(private = "file")
+emit_event_enum :: proc(b: ^strings.Builder, input: Codegen_Input) {
+	g := input.grammar
+	states := input.states
+
+	// イベント名を収集
+	events: [dynamic]string
+	event_rules: [dynamic]string // 各イベントが属する規則名 (グループ分け用)
+	defer delete(events)
+	defer delete(event_rules)
+
+	for &rule in g.rules {
+		if input.op_loops != nil && rule.name in input.op_loops^ {
+			// 演算子ループ規則
+			loop := &input.op_loops[rule.name]
+
+			// カテゴリ D: ベースケースの先頭 Terminal
+			for base_idx in loop.base_prods {
+				base_prod := &rule.productions[base_idx]
+				if len(base_prod.symbols) > 0 && base_prod.symbols[0].kind == .Terminal {
+					name := event_name_for_match(rule.name, base_prod.symbols[0].name)
+					append(&events, strings.clone(name, context.temp_allocator))
+					append(&event_rules, rule.name)
+				}
+			}
+
+			// カテゴリ C: 演算子マッチ
+			name := event_name_for_operator(rule.name)
+			append(&events, strings.clone(name, context.temp_allocator))
+			append(&event_rules, rule.name)
+		} else {
+			// 通常規則
+
+			// カテゴリ A: 開始状態での Terminal マッチ
+			for &prod in rule.productions {
+				if len(prod.symbols) > 0 && prod.symbols[0].kind == .Terminal {
+					name := event_name_for_match(rule.name, prod.symbols[0].name)
+					append(&events, strings.clone(name, context.temp_allocator))
+					append(&event_rules, rule.name)
+				}
+			}
+
+			// カテゴリ B: 中間状態 (Await_ 状態) — 状態名をそのまま使用
+			for &s in states {
+				if s.rule == rule.name && s.pos > 0 {
+					append(&events, strings.clone(s.name, context.temp_allocator))
+					append(&event_rules, rule.name)
+				}
+			}
+		}
+	}
+
+	// enum 出力
+	fmt.sbprint(b, "// パースイベント種別\n")
+	fmt.sbprint(b, "Parse_Event :: enum {\n")
+	fmt.sbprint(b, "\tNone,\n")
+
+	current_rule := ""
+	for ev, i in events {
+		if event_rules[i] != current_rule {
+			current_rule = event_rules[i]
+			fmt.sbprintf(b, "\t// -- %s --\n", current_rule)
+		}
+		fmt.sbprintf(b, "\t%s,\n", ev)
 	}
 
 	fmt.sbprint(b, "}\n\n")
