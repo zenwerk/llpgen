@@ -945,14 +945,21 @@ emit_token_type_enum :: proc(b: ^strings.Builder, g: ^Grammar) {
 	fmt.sbprint(b, "}\n\n")
 }
 
-// Token struct の生成
+// Token struct の生成 (Pos 構造体を含む)
 @(private = "file")
 emit_token_struct :: proc(b: ^strings.Builder, g: ^Grammar) {
 	tk_type := get_token_type(g)
 	tk_enum := get_token_enum_type(g)
 
 	fmt.sbprintf(b,
-`// トークン
+`// 位置情報
+Pos :: struct {{
+	offset: int,
+	line:   int,
+	column: int,
+}}
+
+// トークン
 %s :: struct {{
 	type:     %s,
 	consumed: bool,
