@@ -593,10 +593,10 @@ args : expr
 	testing.expect(t, strings.contains(code, "Parse_Event :: enum"), "Expected Parse_Event enum")
 	testing.expect(t, strings.contains(code, "None,"), "Expected None event")
 
-	// 演算子ループイベント
-	testing.expect(t, strings.contains(code, "Expr_Operator,"), "Expected Expr_Operator event")
-	testing.expect(t, strings.contains(code, "Term_Operator,"), "Expected Term_Operator event")
-	testing.expect(t, strings.contains(code, "Args_Operator,"), "Expected Args_Operator event")
+	// 演算子ループイベント (状態名と一致)
+	testing.expect(t, strings.contains(code, "Expr_Op,"), "Expected Expr_Op event")
+	testing.expect(t, strings.contains(code, "Term_Op,"), "Expected Term_Op event")
+	testing.expect(t, strings.contains(code, "Args_Op,"), "Expected Args_Op event")
 
 	// factor の開始状態イベント
 	testing.expect(t, strings.contains(code, "Factor_Number,"), "Expected Factor_Number event")
@@ -628,7 +628,7 @@ term : Number ;
 	testing.expectf(t, ok, "Expected codegen success")
 
 	// on_parse_event 呼び出しが生成されている
-	testing.expect(t, strings.contains(code, "on_parse_event(p, .Expr_Operator, tk, top)"), "Expected Expr_Operator event call")
+	testing.expect(t, strings.contains(code, "on_parse_event(p, .Expr_Op, tk, top)"), "Expected Expr_Op event call")
 	testing.expect(t, strings.contains(code, "on_parse_event(p, .Term_Number, tk, top)"), "Expected Term_Number event call")
 }
 
@@ -688,9 +688,9 @@ factor : Number ;
 
 	testing.expectf(t, ok, "Expected codegen success")
 
-	// 演算子ループのイベント呼び出し
-	testing.expect(t, strings.contains(code, "on_parse_event(p, .Expr_Operator, tk, top)"), "Expected Expr_Operator call")
-	testing.expect(t, strings.contains(code, "on_parse_event(p, .Term_Operator, tk, top)"), "Expected Term_Operator call")
+	// 演算子ループのイベント呼び出し (状態名と一致)
+	testing.expect(t, strings.contains(code, "on_parse_event(p, .Expr_Op, tk, top)"), "Expected Expr_Op call")
+	testing.expect(t, strings.contains(code, "on_parse_event(p, .Term_Op, tk, top)"), "Expected Term_Op call")
 
 	// factor の開始状態イベント
 	testing.expect(t, strings.contains(code, "on_parse_event(p, .Factor_Number, tk, top)"), "Expected Factor_Number call")

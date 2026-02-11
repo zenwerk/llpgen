@@ -138,11 +138,17 @@ event_name_for_match :: proc(rule_name, terminal_name: string) -> string {
 }
 
 // イベント名導出: 演算子ループの演算子マッチ
-// rule="expr" → "Expr_Operator"
+// states から Op 状態名を検索して返す (例: "Expr_Op")
 @(private = "file")
-event_name_for_operator :: proc(rule_name: string) -> string {
+event_name_for_operator :: proc(rule_name: string, states: ^[dynamic]Gen_State) -> string {
+	for &s in states {
+		if s.rule == rule_name && s.prod == -1 && s.pos == 1 {
+			return s.name
+		}
+	}
+	// フォールバック: 見つからない場合は従来の命名
 	rule_pascal := to_pascal_case(rule_name, context.temp_allocator)
-	return fmt.tprintf("%s_Operator", rule_pascal)
+	return fmt.tprintf("%s_Op", rule_pascal)
 }
 
 @(private = "file")
@@ -171,8 +177,8 @@ emit_event_enum :: proc(b: ^strings.Builder, input: Codegen_Input) {
 				}
 			}
 
-			// カテゴリ C: 演算子マッチ
-			name := event_name_for_operator(rule.name)
+			// カテゴリ C: 演算子マッチ (状態名と一致させる)
+			name := event_name_for_operator(rule.name, states)
 			append(&events, strings.clone(name, context.temp_allocator))
 			append(&event_rules, rule.name)
 		} else {
@@ -885,9 +891,8 @@ parse_%s :: proc(p: ^Parser, tk: ^%s) -> Parse_Loop_Action {{
 		if i > 0 { fmt.sbprint(b, " || ") }
 		fmt.sbprintf(b, "tk.type == .%s", op)
 	}
-	ev := event_name_for_operator(rule.name)
 	fmt.sbprint(b, " {\n")
-	fmt.sbprintf(b, "\t\t\ton_parse_event(p, .%s, tk, top)\n", ev)
+	fmt.sbprintf(b, "\t\t\ton_parse_event(p, .%s, tk, top)\n", op_state)
 	fmt.sbprint(b, "\t\t\ttk.consumed = true\n")
 	fmt.sbprintf(b, "\t\t\tparser_begin(p, .%s, top.node)\n", base_start)
 	fmt.sbprint(b, "\t\t\treturn .Continue\n")
