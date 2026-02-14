@@ -744,6 +744,66 @@ expr : expr Plus Number Minus
 }
 
 // ========================================================================
+// パススルー規則検出テスト
+// ========================================================================
+
+@(test)
+analysis_passthrough_detection_test :: proc(t: ^testing.T) {
+	// lambda_expr : pipe_expr ; はパススルー規則
+	input := `%token Eof Number Plus
+%%
+lambda_expr : pipe_expr ;
+pipe_expr : Number Plus Number ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	passthrough := detect_passthrough_rules(&g)
+	defer delete(passthrough)
+
+	testing.expectf(t, len(passthrough) == 1, "Expected 1 passthrough rule, got %d", len(passthrough))
+	testing.expect(t, "lambda_expr" in passthrough, "Expected 'lambda_expr' as passthrough")
+	testing.expectf(t, passthrough["lambda_expr"] == "pipe_expr", "Expected target 'pipe_expr', got '%s'", passthrough["lambda_expr"])
+}
+
+@(test)
+analysis_passthrough_not_detected_test :: proc(t: ^testing.T) {
+	// 複数 production や複数シンボルはパススルーではない
+	input := `%token Eof Number Plus
+%%
+expr : Number
+     | Number Plus Number
+     ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	passthrough := detect_passthrough_rules(&g)
+	defer delete(passthrough)
+
+	testing.expectf(t, len(passthrough) == 0, "Expected 0 passthrough rules, got %d", len(passthrough))
+}
+
+@(test)
+analysis_passthrough_terminal_not_detected_test :: proc(t: ^testing.T) {
+	// 単一 Terminal は Nonterminal パススルーではない
+	input := `%token Eof Number
+%%
+term : Number ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	passthrough := detect_passthrough_rules(&g)
+	defer delete(passthrough)
+
+	testing.expectf(t, len(passthrough) == 0, "Expected 0 passthrough rules (Terminal only), got %d", len(passthrough))
+}
+
+// ========================================================================
 // 間接左再帰の検出テスト
 // ========================================================================
 

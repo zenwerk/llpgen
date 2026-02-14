@@ -332,6 +332,33 @@ add_leading_nonterminal_edges :: proc(g: ^Grammar, edges: ^map[string]map[string
 }
 
 // ========================================================================
+// 3.1a-2b: パススルー規則の検出
+// ========================================================================
+
+// パススルー規則: production が1つだけで、シンボルが1つの Nonterminal のみ
+// 例: lambda_expr : pipe_expr ;
+// 返り値: rule_name → target_name のマップ
+detect_passthrough_rules :: proc(g: ^Grammar) -> map[string]string {
+	result: map[string]string
+
+	for &rule in g.rules {
+		if len(rule.productions) != 1 {
+			continue
+		}
+		prod := &rule.productions[0]
+		if len(prod.symbols) != 1 {
+			continue
+		}
+		sym := prod.symbols[0]
+		if sym.kind == .Nonterminal {
+			result[rule.name] = sym.name
+		}
+	}
+
+	return result
+}
+
+// ========================================================================
 // 3.1a-3: 演算子ループパターンの検出
 // ========================================================================
 

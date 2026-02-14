@@ -45,6 +45,16 @@ main :: proc() {
 		os.exit(1)
 	}
 
+	// 3.4. パススルー規則の検出
+	passthrough := detect_passthrough_rules(&g)
+	defer delete(passthrough)
+	if len(passthrough) > 0 {
+		fmt.eprintfln("Info: %d passthrough rule(s) detected:", len(passthrough))
+		for name, target in passthrough {
+			fmt.eprintfln("  rule '%s' -> '%s'", name, target)
+		}
+	}
+
 	// 3.5. 演算子ループパターンの検出 + 変換不可能な左再帰の検出
 	op_loops := detect_operator_loops(&g)
 	defer operator_loops_destroy(&op_loops)
