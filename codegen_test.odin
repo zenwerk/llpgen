@@ -753,3 +753,36 @@ opt_prefix : Minus
 	// if true TODO が含まれていない
 	testing.expect(t, !strings.contains(code, "if true /* TODO"), "TODO fallback should not exist")
 }
+
+@(test)
+codegen_operator_loop_multi_symbol_base_test :: proc(t: ^testing.T) {
+	// mul_expr : mul_expr Op_Mult unary | Op_Minus unary ;
+	// ベースケース Op_Minus unary は複数シンボル — unary への遷移が生成されること
+	input := `%package test_pkg
+%token Eof Number Op_Mult Op_Minus
+%left Op_Mult
+%%
+mul_expr : mul_expr Op_Mult unary
+         | Op_Minus unary
+         ;
+unary : Number ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+
+	testing.expectf(t, ok, "Expected codegen success")
+
+	// Op_Minus を消費するイベントがある
+	testing.expect(t, strings.contains(code, "on_parse_event(p, .Mul_Expr_Op_Minus, tk, top)"), "Expected Mul_Expr_Op_Minus event")
+
+	// Op_Minus 消費後に unary への begin が生成される
+	testing.expect(t, strings.contains(code, "parser_begin(p, .Unary"), "Expected parser_begin for Unary after Op_Minus")
+
+	// 中括弧バランス
+	brace_count := 0
+	for ch in code {
+		if ch == '{' { brace_count += 1 }
+		if ch == '}' { brace_count -= 1 }
+	}
+	testing.expectf(t, brace_count == 0, "Unbalanced braces: count=%d", brace_count)
+}

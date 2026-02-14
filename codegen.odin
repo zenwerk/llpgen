@@ -861,6 +861,31 @@ find_next_real_state :: proc(states: ^[dynamic]Gen_State, rule_name: string, pro
 // 演算子ループ規則のコード生成
 // ========================================================================
 
+// 演算子ループのベースケースで Terminal 消費後の残りシンボルを処理
+// op_state に遷移した上で、残りの Nonterminal をスタックに積む
+@(private = "file")
+emit_operator_loop_remaining_symbols :: proc(b: ^strings.Builder, input: Codegen_Input, prod: ^Production, from_pos: int, op_state: string, indent: string) {
+	states := input.states
+
+	if from_pos >= len(prod.symbols) {
+		// 残りシンボルなし → op_state に遷移
+		fmt.sbprintf(b, "%sparser_set_state(p, .%s)\n", indent, op_state)
+		fmt.sbprintf(b, "%sreturn .Continue\n", indent)
+		return
+	}
+
+	// 残りの Nonterminal シンボルをスタックに積む (逆順)
+	fmt.sbprintf(b, "%sparser_set_state(p, .%s)\n", indent, op_state)
+	for i := len(prod.symbols) - 1; i >= from_pos; i -= 1 {
+		sym := prod.symbols[i]
+		if sym.kind == .Nonterminal {
+			nt_start := find_state_for(states, sym.name, 0, 0)
+			fmt.sbprintf(b, "%sparser_begin(p, .%s, top.node)\n", indent, nt_start)
+		}
+	}
+	fmt.sbprintf(b, "%sreturn .Continue\n", indent)
+}
+
 // 演算子ループ規則の parse 関数を生成
 // 手書きの Expr → Expr_Op パターンに相当するコードを出力
 @(private = "file")
@@ -958,13 +983,28 @@ emit_operator_loop_base_case :: proc(b: ^strings.Builder, input: Codegen_Input, 
 				ev := event_name_for_match(rule.name, first_sym.name)
 				fmt.sbprintf(b, "\t\ton_parse_event(p, .%s, tk, top)\n", ev)
 				fmt.sbprintf(b, "\t\ttk.consumed = true\n")
-				fmt.sbprintf(b, "\t\tparser_set_state(p, .%s)\n", op_state)
-				fmt.sbprint(b, "\t\treturn .Continue\n")
+				// 残りのシンボルがある場合は遷移を生成
+				emit_operator_loop_remaining_symbols(b, input, base_prod, 1, op_state, "\t\t")
 			} else {
 				nonterminal_start := find_state_for(states, first_sym.name, 0, 0)
-				fmt.sbprintf(b, "\t\tparser_set_state(p, .%s)\n", op_state)
-				fmt.sbprintf(b, "\t\tparser_begin(p, .%s, top.node)\n", nonterminal_start)
-				fmt.sbprint(b, "\t\treturn .Continue\n")
+				if len(base_prod.symbols) == 1 {
+					fmt.sbprintf(b, "\t\tparser_set_state(p, .%s)\n", op_state)
+					fmt.sbprintf(b, "\t\tparser_begin(p, .%s, top.node)\n", nonterminal_start)
+					fmt.sbprint(b, "\t\treturn .Continue\n")
+				} else {
+					// Nonterminal の後に残りシンボルがある場合
+					fmt.sbprintf(b, "\t\tparser_set_state(p, .%s)\n", op_state)
+					// 残りの Nonterminal を逆順にスタックに積む
+					for i := len(base_prod.symbols) - 1; i >= 1; i -= 1 {
+						sym := base_prod.symbols[i]
+						if sym.kind == .Nonterminal {
+							nt_start := find_state_for(states, sym.name, 0, 0)
+							fmt.sbprintf(b, "\t\tparser_begin(p, .%s, top.node)\n", nt_start)
+						}
+					}
+					fmt.sbprintf(b, "\t\tparser_begin(p, .%s, top.node)\n", nonterminal_start)
+					fmt.sbprint(b, "\t\treturn .Continue\n")
+				}
 			}
 		}
 	} else {
@@ -989,23 +1029,29 @@ emit_operator_loop_base_case :: proc(b: ^strings.Builder, input: Codegen_Input, 
 			first_sym := base_prod.symbols[0]
 			if first_sym.kind == .Terminal {
 				ev := event_name_for_match(rule.name, first_sym.name)
-				if len(base_prod.symbols) == 1 {
-					fmt.sbprintf(b, "\t\t\ton_parse_event(p, .%s, tk, top)\n", ev)
-					fmt.sbprint(b, "\t\t\ttk.consumed = true\n")
-					fmt.sbprintf(b, "\t\t\tparser_set_state(p, .%s)\n", op_state)
-					fmt.sbprint(b, "\t\t\treturn .Continue\n")
-				} else {
-					// 複数シンボルのベースケース — 最初のTerminalを消費して次状態へ
-					fmt.sbprintf(b, "\t\t\ton_parse_event(p, .%s, tk, top)\n", ev)
-					fmt.sbprint(b, "\t\t\ttk.consumed = true\n")
-					fmt.sbprintf(b, "\t\t\tparser_set_state(p, .%s)\n", op_state)
-					fmt.sbprint(b, "\t\t\treturn .Continue\n")
-				}
+				fmt.sbprintf(b, "\t\t\ton_parse_event(p, .%s, tk, top)\n", ev)
+				fmt.sbprint(b, "\t\t\ttk.consumed = true\n")
+				// 残りのシンボルがある場合は遷移を生成
+				emit_operator_loop_remaining_symbols(b, input, base_prod, 1, op_state, "\t\t\t")
 			} else {
 				nonterminal_start := find_state_for(states, first_sym.name, 0, 0)
-				fmt.sbprintf(b, "\t\t\tparser_set_state(p, .%s)\n", op_state)
-				fmt.sbprintf(b, "\t\t\tparser_begin(p, .%s, top.node)\n", nonterminal_start)
-				fmt.sbprint(b, "\t\t\treturn .Continue\n")
+				if len(base_prod.symbols) == 1 {
+					fmt.sbprintf(b, "\t\t\tparser_set_state(p, .%s)\n", op_state)
+					fmt.sbprintf(b, "\t\t\tparser_begin(p, .%s, top.node)\n", nonterminal_start)
+					fmt.sbprint(b, "\t\t\treturn .Continue\n")
+				} else {
+					// Nonterminal の後に残りシンボルがある場合
+					fmt.sbprintf(b, "\t\t\tparser_set_state(p, .%s)\n", op_state)
+					for i := len(base_prod.symbols) - 1; i >= 1; i -= 1 {
+						sym := base_prod.symbols[i]
+						if sym.kind == .Nonterminal {
+							nt_start := find_state_for(states, sym.name, 0, 0)
+							fmt.sbprintf(b, "\t\t\tparser_begin(p, .%s, top.node)\n", nt_start)
+						}
+					}
+					fmt.sbprintf(b, "\t\t\tparser_begin(p, .%s, top.node)\n", nonterminal_start)
+					fmt.sbprint(b, "\t\t\treturn .Continue\n")
+				}
 			}
 			fmt.sbprint(b, "\t\t}")
 		}
