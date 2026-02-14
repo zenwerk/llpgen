@@ -163,6 +163,9 @@ main :: proc() {
 		}
 	}
 
+	// 5.5. 空 FIRST+FOLLOW 集合のチェック
+	check_empty_first_follow(&g, firsts, follows, &op_loops)
+
 	// 6. generate_states() で状態生成
 	states := generate_states(&g, &op_loops)
 	defer states_destroy(&states)

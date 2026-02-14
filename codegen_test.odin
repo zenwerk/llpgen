@@ -664,6 +664,9 @@ args : expr
 
 	// TODO: AST コメントが生成されていない
 	testing.expect(t, !strings.contains(code, "// TODO: AST"), "TODO AST comments should not be in generated code")
+
+	// if true フォールバックが生成されていない (通常の文法では FIRST+FOLLOW で条件が生成される)
+	testing.expect(t, !strings.contains(code, "if true"), "if true fallback should not exist for normal grammar")
 }
 
 @(test)

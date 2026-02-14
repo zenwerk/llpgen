@@ -767,6 +767,62 @@ check_ll1_conflicts :: proc(g: ^Grammar, firsts: First_Sets, follows: Follow_Set
 }
 
 // ========================================================================
+// 3.1d-2: 空 FIRST+FOLLOW 集合のチェック
+// ========================================================================
+
+// production の先頭シンボルが Nonterminal の場合、FIRST+FOLLOW が空でないか検証
+// 空の場合は Warning を出力
+check_empty_first_follow :: proc(g: ^Grammar, firsts: First_Sets, follows: Follow_Sets, op_loops: ^map[string]Operator_Loop = nil) {
+	for &rule in g.rules {
+		// 演算子ループ規則はスキップ
+		if op_loops != nil && rule.name in op_loops^ {
+			continue
+		}
+		if len(rule.productions) < 2 {
+			continue // 単一 production は分岐不要
+		}
+
+		for &prod, prod_idx in rule.productions {
+			if len(prod.symbols) == 0 {
+				continue // ε production は条件なしで else ブランチになる
+			}
+			first_sym := prod.symbols[0]
+			if first_sym.kind != .Nonterminal {
+				continue // Terminal は直接マッチ
+			}
+
+			// FIRST(production) を計算
+			mutable_firsts := firsts
+			first_set := compute_first_of_symbols(&mutable_firsts, prod.symbols[:], g)
+			defer delete(first_set)
+
+			has_non_epsilon := false
+			for tok in first_set {
+				if tok != EPSILON_MARKER {
+					has_non_epsilon = true
+					break
+				}
+			}
+
+			if !has_non_epsilon {
+				// FIRST が空 (ε のみ)、FOLLOW もチェック
+				has_follow := false
+				if rule.name in follows {
+					for _ in follows[rule.name] {
+						has_follow = true
+						break
+					}
+				}
+				if !has_follow {
+					fmt.eprintfln("Warning: rule '%s' production %d has empty FIRST+FOLLOW set for leading nonterminal '%s'",
+						rule.name, prod_idx, first_sym.name)
+				}
+			}
+		}
+	}
+}
+
+// ========================================================================
 // 3.1e: Push Parser 状態の生成
 // ========================================================================
 
