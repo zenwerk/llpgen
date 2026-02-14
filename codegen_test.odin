@@ -695,3 +695,31 @@ factor : Number ;
 	// factor の開始状態イベント
 	testing.expect(t, strings.contains(code, "on_parse_event(p, .Factor_Number, tk, top)"), "Expected Factor_Number call")
 }
+
+// ========================================================================
+// 出力の決定的順序テスト
+// ========================================================================
+
+@(test)
+codegen_deterministic_output_test :: proc(t: ^testing.T) {
+	// 複数の FIRST トークンを持つ文法で、2回コード生成して同一出力を確認
+	input := `%package det_test
+%token Eof Number Ident Plus Minus Asterisk Slash Left_Paren Right_Paren
+%%
+factor : Number
+       | Ident
+       | Left_Paren expr Right_Paren
+       | Minus factor
+       ;
+expr : Number ;
+%%`
+	code1, ok1 := generate_code_from_input(input)
+	defer delete(code1)
+	testing.expectf(t, ok1, "Expected codegen success (1)")
+
+	code2, ok2 := generate_code_from_input(input)
+	defer delete(code2)
+	testing.expectf(t, ok2, "Expected codegen success (2)")
+
+	testing.expect(t, code1 == code2, "Expected deterministic output: two codegen runs should produce identical code")
+}

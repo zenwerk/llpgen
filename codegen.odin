@@ -1,6 +1,7 @@
 package llpgen
 
 import "core:fmt"
+import "core:slice"
 import "core:strings"
 
 // コード生成の入力
@@ -671,6 +672,7 @@ emit_production_condition :: proc(b: ^strings.Builder, input: Codegen_Input, pro
 			if tok == EPSILON_MARKER { continue }
 			append(&conditions, tok)
 		}
+		slice.sort(conditions[:])
 
 		if len(conditions) > 0 {
 			fmt.sbprint(b, "if ")
