@@ -879,3 +879,37 @@ expr : Number ;
 	testing.expectf(t, ok, "Expected codegen success")
 	testing.expect(t, strings.contains(code, "max iterations exceeded"), "Expected max iterations error message")
 }
+
+@(test)
+codegen_error_recovery_with_term_test :: proc(t: ^testing.T) {
+	// %term がある場合、Error 状態でパニックモード回復コードが生成される
+	input := `%package test_pkg
+%token Eof Error Number Newline Semicolon
+%term Newline Semicolon
+%%
+expr : Number ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+	testing.expectf(t, ok, "Expected codegen success")
+
+	// パニックモード回復コードが含まれている
+	testing.expect(t, strings.contains(code, "is_term(tk)"), "Expected is_term check in error recovery")
+	testing.expect(t, strings.contains(code, "parser_set_state(p, .Start)"), "Expected reset to Start state")
+}
+
+@(test)
+codegen_error_no_recovery_without_term_test :: proc(t: ^testing.T) {
+	// %term がない場合、パニックモード回復コードは生成されない
+	input := `%package test_pkg
+%token Eof Error Number
+%%
+expr : Number ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+	testing.expectf(t, ok, "Expected codegen success")
+
+	// パニックモード回復コードが含まれていない
+	testing.expect(t, !strings.contains(code, "is_term(tk)"), "is_term should not be in code without %term")
+}

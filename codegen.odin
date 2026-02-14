@@ -508,6 +508,8 @@ emit_parse_start :: proc(b: ^strings.Builder, g: ^Grammar, states: ^[dynamic]Gen
 
 	tk_type := get_token_type(g)
 
+	has_term := len(g.term_tokens) > 0
+
 	fmt.sbprintf(b,
 `// 開始状態のパース
 parse_start :: proc(p: ^Parser, tk: ^%s) -> Parse_Loop_Action {{
@@ -526,12 +528,31 @@ parse_start :: proc(p: ^Parser, tk: ^%s) -> Parse_Loop_Action {{
 	case .End:
 		return .Break
 	case .Error:
-		tk.consumed = true
-	}}
-	return .Break
-}}
-
 `, tk_type, start_state)
+
+	if has_term {
+		// パニックモード回復: term トークンまでスキップして再開
+		fmt.sbprint(b,
+`		// パニックモード: term トークンまでスキップして再開
+		if is_term(tk) {
+			tk.consumed = true
+			parser_set_state(p, .Start)
+			return .Continue
+		}
+		tk.consumed = true
+		return .Continue
+`)
+	} else {
+		// term トークンがない場合は従来通り即座に Break
+		fmt.sbprint(b, "\t\ttk.consumed = true\n")
+	}
+
+	fmt.sbprint(b,
+`	}
+	return .Break
+}
+
+`)
 }
 
 // ========================================================================
