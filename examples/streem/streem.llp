@@ -66,7 +66,7 @@ topstmt_list_opt : topstmt topstmt_rest
                  |
                  ;
 
-topstmt_rest : terms topstmt topstmt_rest
+topstmt_rest : terms topstmt_list_opt
              |
              ;
 
@@ -98,7 +98,7 @@ stmt_list_opt : stmt stmt_rest
               |
               ;
 
-stmt_rest : terms stmt stmt_rest
+stmt_rest : terms stmt_list_opt
           |
           ;
 
@@ -156,7 +156,7 @@ def_body : Lparen opt_f_args Rparen method_body
 // 左再帰は自動的に反復ループに変換される。
 
 // if 式は演算子より優先度が低い
-expr : Kw_If condition pipe_expr opt_else
+expr : Kw_If condition pipe_expr opt_terms opt_else
      | lambda_expr
      ;
 
@@ -279,7 +279,7 @@ primary : Lit_Number
 // → 現状の llpgen DSL では解決困難 (後述の「不足機能」参照)
 ident_or_call : Ident ident_suffix ;
 
-ident_suffix : Lbrace stmts Rbrace
+ident_suffix : Lbrace block_content Rbrace
              | Lparen opt_args Rparen opt_block
              |
              ;
@@ -332,8 +332,19 @@ block : Lbrace block_content Rbrace ;
 
 block_content : Op_Lambda stmts
               | Kw_Case case_body_rest
+              | Ident block_after_ident
               | stmts
               ;
+
+// Ident の後: ',' or '->' なら bparam、それ以外なら stmts の一部
+// NOTE: Ident の後に Op_Lambda が来たら bparam パターン。
+// Comma が来たら複数パラメータの bparam。
+// それ以外は通常の stmt の続き (ident_suffix + stmt_suffix から
+// stmts の残りへ) として処理。
+block_after_ident : Comma Ident f_args_rest Op_Lambda stmts
+                  | Op_Lambda stmts
+                  | ident_suffix stmt_suffix opt_terms stmt_list_opt
+                  ;
 
 case_body_rest : cparam stmts case_body_cont ;
 

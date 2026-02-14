@@ -70,10 +70,11 @@ Parse_Result :: enum {
 
 // パーサー状態
 Parse_State :: struct {
-	state: Parse_State_Kind,
-	node:  ^^Node,    // 現在のノードへのポインタ
-	saved: ^Node,     // 保存用ノード
-	op:    string,    // 演算子 (必要に応じて)
+	state:     Parse_State_Kind,
+	node:      ^^Node,    // 現在のノードへのポインタ
+	saved:     ^Node,     // 保存用ノード
+	op:        string,    // 演算子 (必要に応じて)
+	user_data: rawptr,    // ユーザー定義データ
 }
 
 // パーサー
@@ -208,6 +209,10 @@ parser_push_token :: proc(p: ^Parser, token: Token) -> Parse_Result {
 		if action == .Break {
 			break
 		}
+
+		if i >= max_iterations - 1 {
+			parser_error(p, "max iterations exceeded in parser_push_token")
+		}
 	}
 
 	top := parser_get_state(p)
@@ -252,6 +257,7 @@ parse_expr :: proc(p: ^Parser, tk: ^Token) -> Parse_Loop_Action {
 	case .Expr_Op:
 		if tk.type == .Plus || tk.type == .Minus {
 			on_parse_event(p, .Expr_Op, tk, top)
+			top.op = tk.lexeme
 			tk.consumed = true
 			parser_begin(p, .Term, top.node)
 			return .Continue
@@ -276,6 +282,7 @@ parse_term :: proc(p: ^Parser, tk: ^Token) -> Parse_Loop_Action {
 	case .Term_Op:
 		if tk.type == .Asterisk || tk.type == .Slash {
 			on_parse_event(p, .Term_Op, tk, top)
+			top.op = tk.lexeme
 			tk.consumed = true
 			parser_begin(p, .Factor, top.node)
 			return .Continue
@@ -367,6 +374,7 @@ parse_args :: proc(p: ^Parser, tk: ^Token) -> Parse_Loop_Action {
 	case .Args_Op:
 		if tk.type == .Comma {
 			on_parse_event(p, .Args_Op, tk, top)
+			top.op = tk.lexeme
 			tk.consumed = true
 			parser_begin(p, .Expr, top.node)
 			return .Continue
