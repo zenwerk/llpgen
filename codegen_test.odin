@@ -786,3 +786,52 @@ unary : Number ;
 	}
 	testing.expectf(t, brace_count == 0, "Unbalanced braces: count=%d", brace_count)
 }
+
+@(test)
+codegen_nonassoc_operator_test :: proc(t: ^testing.T) {
+	// nonassoc 演算子: a == b == c がパースエラーになるチェックコードが生成される
+	input := `%package test_pkg
+%token Eof Number Eq Plus
+%nonassoc Eq
+%left Plus
+%%
+expr : expr Eq term
+     | expr Plus term
+     | term
+     ;
+term : Number ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+
+	testing.expectf(t, ok, "Expected codegen success")
+
+	// nonassoc チェーンの検出コードが含まれている
+	testing.expect(t, strings.contains(code, "Non-associative operator"), "Expected nonassoc chain error message")
+	testing.expect(t, strings.contains(code, `top.op == "Eq"`), "Expected nonassoc check for Eq")
+
+	// top.op = tk.lexeme で演算子を記録
+	testing.expect(t, strings.contains(code, "top.op = tk.lexeme"), "Expected operator recording")
+}
+
+@(test)
+codegen_no_nonassoc_no_check_test :: proc(t: ^testing.T) {
+	// nonassoc がない場合はチェックコードが生成されない
+	input := `%package test_pkg
+%token Eof Number Plus Minus
+%left Plus Minus
+%%
+expr : expr Plus term
+     | expr Minus term
+     | term
+     ;
+term : Number ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+
+	testing.expectf(t, ok, "Expected codegen success")
+
+	// nonassoc チェックが含まれていない
+	testing.expect(t, !strings.contains(code, "Non-associative operator"), "nonassoc check should not exist for left-assoc only")
+}

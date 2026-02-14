@@ -944,6 +944,17 @@ parse_%s :: proc(p: ^Parser, tk: ^%s) -> Parse_Loop_Action {{
 
 	fmt.sbprintf(b, "\tcase .%s:\n", op_state)
 
+	// nonassoc 演算子があるか確認
+	has_nonassoc := false
+	nonassoc_ops: [dynamic]string
+	defer delete(nonassoc_ops)
+	for op in loop.operators {
+		if assoc, ok := loop.operator_assoc[op]; ok && assoc == .None {
+			has_nonassoc = true
+			append(&nonassoc_ops, op)
+		}
+	}
+
 	// 演算子チェック: いずれかの演算子にマッチすればベースをパース (ループ)
 	fmt.sbprint(b, "\t\tif ")
 	for op, i in loop.operators {
@@ -951,7 +962,23 @@ parse_%s :: proc(p: ^Parser, tk: ^%s) -> Parse_Loop_Action {{
 		fmt.sbprintf(b, "tk.type == .%s", op)
 	}
 	fmt.sbprint(b, " {\n")
+
+	// nonassoc 演算子のチェーン禁止
+	if has_nonassoc {
+		fmt.sbprint(b, "\t\t\t// nonassoc 演算子のチェーン検出\n")
+		fmt.sbprint(b, "\t\t\tif top.op != \"\" && (")
+		for nop, i in nonassoc_ops {
+			if i > 0 { fmt.sbprint(b, " || ") }
+			fmt.sbprintf(b, "top.op == \"%s\"", nop)
+		}
+		fmt.sbprint(b, ") {\n")
+		fmt.sbprint(b, "\t\t\t\tparser_error(p, fmt.tprintf(\"Non-associative operator '%%s' cannot be chained\", top.op))\n")
+		fmt.sbprint(b, "\t\t\t\treturn .Break\n")
+		fmt.sbprint(b, "\t\t\t}\n")
+	}
+
 	fmt.sbprintf(b, "\t\t\ton_parse_event(p, .%s, tk, top)\n", op_state)
+	fmt.sbprint(b, "\t\t\ttop.op = tk.lexeme\n")
 	fmt.sbprint(b, "\t\t\ttk.consumed = true\n")
 	fmt.sbprintf(b, "\t\t\tparser_begin(p, .%s, top.node)\n", base_start)
 	fmt.sbprint(b, "\t\t\treturn .Continue\n")

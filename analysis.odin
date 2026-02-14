@@ -23,10 +23,11 @@ Ll1_Conflict :: struct {
 // 演算子ループ変換情報
 // A : A op1 B | A op2 B | ... | B パターンを表現
 Operator_Loop :: struct {
-	rule_name:   string,           // 変換対象の規則名 (例: "expr")
-	base_name:   string,           // ベースケースの非終端記号名 (例: "term")
-	operators:   [dynamic]string,  // 演算子トークン名リスト (例: {"Plus", "Minus"})
-	base_prods:  [dynamic]int,     // ベースケース production のインデックス
+	rule_name:      string,              // 変換対象の規則名 (例: "expr")
+	base_name:      string,              // ベースケースの非終端記号名 (例: "term")
+	operators:      [dynamic]string,     // 演算子トークン名リスト (例: {"Plus", "Minus"})
+	operator_assoc: map[string]Assoc,    // 演算子名→結合性 (precedence 宣言から取得)
+	base_prods:     [dynamic]int,        // ベースケース production のインデックス
 }
 
 // Push Parser 状態
@@ -187,6 +188,7 @@ detect_operator_loops :: proc(g: ^Grammar) -> map[string]Operator_Loop {
 operator_loops_destroy :: proc(loops: ^map[string]Operator_Loop) {
 	for _, &v in loops {
 		delete(v.operators)
+		delete(v.operator_assoc)
 		delete(v.base_prods)
 	}
 	delete(loops^)
@@ -265,11 +267,24 @@ try_detect_operator_loop :: proc(g: ^Grammar, rule: ^Rule) -> (Operator_Loop, bo
 		return {}, false
 	}
 
+	// 各演算子の結合性を precedence テーブルから取得
+	op_assoc: map[string]Assoc
+	for &op in operators {
+		for &pe in g.precedence {
+			for &tok in pe.tokens {
+				if tok == op {
+					op_assoc[op] = pe.assoc
+				}
+			}
+		}
+	}
+
 	return Operator_Loop{
-		rule_name   = rule.name,
-		base_name   = base_name,
-		operators   = operators,
-		base_prods  = base_prods,
+		rule_name      = rule.name,
+		base_name      = base_name,
+		operators      = operators,
+		operator_assoc = op_assoc,
+		base_prods     = base_prods,
 	}, true
 }
 
