@@ -125,12 +125,12 @@ main :: proc() {
 
 	// 5. check_ll1_conflicts() で衝突検出 (警告出力、演算子ループ変換済み規則はスキップ)
 	conflicts := check_ll1_conflicts(&g, firsts, follows, &op_loops)
-	defer delete(conflicts)
+	defer ll1_conflicts_destroy(&conflicts)
 	if len(conflicts) > 0 {
 		fmt.eprintfln("Warning: %d LL(1) conflict(s) detected:", len(conflicts))
 		for &c in conflicts {
-			fmt.eprintfln("  rule '%s': productions %d and %d conflict on token '%s'",
-				c.rule_name, c.prod_i, c.prod_j, c.token)
+			fmt.eprintfln("  rule '%s': productions %d and %d conflict on tokens: %s",
+				c.rule_name, c.prod_i, c.prod_j, strings.join(c.tokens[:], ", ", context.temp_allocator))
 		}
 	}
 

@@ -1,6 +1,7 @@
 package llpgen
 
 import "core:fmt"
+import "core:slice"
 import "core:strings"
 
 // FIRST 集合: 非終端記号名 → {トークン名} のマップ
@@ -17,7 +18,7 @@ Ll1_Conflict :: struct {
 	rule_name: string,
 	prod_i:    int,
 	prod_j:    int,
-	token:     string, // 衝突するトークン
+	tokens:    [dynamic]string, // 衝突するトークンのリスト
 }
 
 // 演算子ループ変換情報
@@ -55,8 +56,15 @@ analysis_result_destroy :: proc(r: ^Analysis_Result) {
 		delete(v)
 	}
 	delete(r.follows)
-	delete(r.conflicts)
+	ll1_conflicts_destroy(&r.conflicts)
 	states_destroy(&r.states)
+}
+
+ll1_conflicts_destroy :: proc(conflicts: ^[dynamic]Ll1_Conflict) {
+	for &c in conflicts {
+		delete(c.tokens)
+	}
+	delete(conflicts^)
 }
 
 states_destroy :: proc(states: ^[dynamic]Gen_State) {
@@ -635,6 +643,15 @@ compute_follow_sets :: proc(g: ^Grammar, firsts: First_Sets) -> Follow_Sets {
 // ========================================================================
 
 check_ll1_conflicts :: proc(g: ^Grammar, firsts: First_Sets, follows: Follow_Sets, op_loops: ^map[string]Operator_Loop = nil) -> [dynamic]Ll1_Conflict {
+	// (rule_name, prod_i, prod_j) でグループ化するための一時マップ
+	Conflict_Key :: struct {
+		rule_name: string,
+		prod_i:    int,
+		prod_j:    int,
+	}
+	grouped: map[Conflict_Key]^Ll1_Conflict
+	defer delete(grouped)
+
 	conflicts: [dynamic]Ll1_Conflict
 
 	for &rule in g.rules {
@@ -661,6 +678,24 @@ check_ll1_conflicts :: proc(g: ^Grammar, firsts: First_Sets, follows: Follow_Set
 			prod_firsts[i] = compute_first_of_symbols(&mutable_firsts, rule.productions[i].symbols[:], g)
 		}
 
+		add_conflict_token :: proc(conflicts: ^[dynamic]Ll1_Conflict, grouped: ^map[Conflict_Key]^Ll1_Conflict, rule_name: string, pi: int, pj: int, tok: string) {
+			key := Conflict_Key{rule_name = rule_name, prod_i = pi, prod_j = pj}
+			if key in grouped^ {
+				c := grouped[key]
+				append(&c.tokens, tok)
+			} else {
+				tokens: [dynamic]string
+				append(&tokens, tok)
+				append(conflicts, Ll1_Conflict{
+					rule_name = rule_name,
+					prod_i    = pi,
+					prod_j    = pj,
+					tokens    = tokens,
+				})
+				grouped[key] = &conflicts[len(conflicts^) - 1]
+			}
+		}
+
 		// 各ペアの FIRST に重複がないかチェック
 		for i := 0; i < prods_count; i += 1 {
 			for j := i + 1; j < prods_count; j += 1 {
@@ -669,12 +704,7 @@ check_ll1_conflicts :: proc(g: ^Grammar, firsts: First_Sets, follows: Follow_Set
 						continue
 					}
 					if tok in prod_firsts[j] {
-						append(&conflicts, Ll1_Conflict{
-							rule_name = rule.name,
-							prod_i    = i,
-							prod_j    = j,
-							token     = tok,
-						})
+						add_conflict_token(&conflicts, &grouped, rule.name, i, j, tok)
 					}
 				}
 			}
@@ -694,16 +724,16 @@ check_ll1_conflicts :: proc(g: ^Grammar, firsts: First_Sets, follows: Follow_Set
 				}
 				for tok in follows[rule.name] {
 					if tok in prod_firsts[j] {
-						append(&conflicts, Ll1_Conflict{
-							rule_name = rule.name,
-							prod_i    = i,
-							prod_j    = j,
-							token     = tok,
-						})
+						add_conflict_token(&conflicts, &grouped, rule.name, i, j, tok)
 					}
 				}
 			}
 		}
+	}
+
+	// 各衝突のトークンリストをソート
+	for &c in conflicts {
+		slice.sort(c.tokens[:])
 	}
 
 	return conflicts

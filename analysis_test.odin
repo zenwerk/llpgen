@@ -333,7 +333,7 @@ primary : Number
 	}
 
 	conflicts := check_ll1_conflicts(&g, firsts, follows)
-	defer delete(conflicts)
+	defer ll1_conflicts_destroy(&conflicts)
 
 	testing.expectf(t, len(conflicts) == 0, "Expected no conflicts, got %d", len(conflicts))
 }
@@ -371,10 +371,58 @@ term : Number ;
 	}
 
 	conflicts := check_ll1_conflicts(&g, firsts, follows)
-	defer delete(conflicts)
+	defer ll1_conflicts_destroy(&conflicts)
 
 	testing.expectf(t, len(conflicts) > 0, "Expected LL(1) conflicts for left-recursive grammar, got %d", len(conflicts))
 	testing.expectf(t, conflicts[0].rule_name == "expr", "Expected conflict in 'expr', got '%s'", conflicts[0].rule_name)
+}
+
+@(test)
+analysis_ll1_conflict_grouped_test :: proc(t: ^testing.T) {
+	// 同じ (rule, prod_i, prod_j) ペアで複数トークンが衝突する場合、1つの Ll1_Conflict にグループ化
+	input := `%token Eof Number Ident Plus Minus
+%%
+expr : expr Plus term
+     | term
+     ;
+term : Number
+     | Ident
+     ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	firsts := compute_first_sets(&g)
+	defer {
+		for k, &v in firsts {
+			delete(v)
+		}
+		delete(firsts)
+	}
+
+	follows := compute_follow_sets(&g, firsts)
+	defer {
+		for k, &v in follows {
+			delete(v)
+		}
+		delete(follows)
+	}
+
+	conflicts := check_ll1_conflicts(&g, firsts, follows)
+	defer ll1_conflicts_destroy(&conflicts)
+
+	// expr の prod 0 (expr Plus term) と prod 1 (term) が Number と Ident で衝突
+	// これが1つの Ll1_Conflict にグループ化されている
+	found_grouped := false
+	for &c in conflicts {
+		if c.rule_name == "expr" && c.prod_i == 0 && c.prod_j == 1 {
+			testing.expectf(t, len(c.tokens) >= 2, "Expected at least 2 tokens in grouped conflict, got %d", len(c.tokens))
+			found_grouped = true
+			break
+		}
+	}
+	testing.expect(t, found_grouped, "Expected grouped conflict for expr prod 0 and 1")
 }
 
 // ========================================================================
@@ -896,7 +944,7 @@ args : expr
 	testing.expectf(t, len(op_loops) == 3, "Expected 3 operator loops, got %d", len(op_loops))
 
 	conflicts := check_ll1_conflicts(&g, firsts, follows, &op_loops)
-	defer delete(conflicts)
+	defer ll1_conflicts_destroy(&conflicts)
 	// 演算子ループ規則をスキップするので衝突は 0 になる可能性がある
 	// (factor は左再帰でないので衝突がない)
 
