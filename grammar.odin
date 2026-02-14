@@ -50,6 +50,7 @@ Grammar :: struct {
 	rules:           [dynamic]Rule,       // 文法規則
 	start_rule:      string,              // 開始規則名 (最初のrule)
 	expected_conflicts: map[string]int,    // %expect_conflict で指定された規則名→許容衝突数
+	max_iterations:     int,               // %max_iterations で指定された最大反復数 (デフォルト: 1000)
 	// 以下は analysis.odin で設定
 	token_set:       map[string]bool,     // 全トークンのセット (O(1)検索用)
 	rule_map:        map[string]int,      // 規則名 → rules配列のインデックス

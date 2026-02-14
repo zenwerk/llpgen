@@ -13,6 +13,7 @@ Llp_Token_Type :: enum {
 	Dir_Token_Type,      // %token_type
 	Dir_Node_Type,       // %node_type
 	Dir_Expect_Conflict, // %expect_conflict
+	Dir_Max_Iterations,  // %max_iterations
 	Separator,      // %%
 	// 文法記号
 	Colon,        // :

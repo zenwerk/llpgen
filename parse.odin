@@ -96,6 +96,8 @@ parse_header_section :: proc(p: ^Llp_Parser, g: ^Grammar) {
 			parse_node_type_directive(p, g)
 		case .Dir_Expect_Conflict:
 			parse_expect_conflict_directive(p, g)
+		case .Dir_Max_Iterations:
+			parse_max_iterations_directive(p, g)
 		case .Separator:
 			return // ヘッダ終了
 		case .Eof:
@@ -206,6 +208,22 @@ parse_expect_conflict_directive :: proc(p: ^Llp_Parser, g: ^Grammar) {
 		return
 	}
 	g.expected_conflicts[rule_name] = count
+	llp_parser_advance(p)
+}
+
+// %max_iterations <number>
+parse_max_iterations_directive :: proc(p: ^Llp_Parser, g: ^Grammar) {
+	llp_parser_advance(p) // %max_iterations を消費
+	if p.current.type != .Ident {
+		llp_parser_error(p, fmt.tprintf("expected integer after %%max_iterations at line %d", p.current.line))
+		return
+	}
+	count, ok := strconv.parse_int(p.current.lexeme)
+	if !ok || count <= 0 {
+		llp_parser_error(p, fmt.tprintf("expected positive integer, got '%s' at line %d", p.current.lexeme, p.current.line))
+		return
+	}
+	g.max_iterations = count
 	llp_parser_advance(p)
 }
 

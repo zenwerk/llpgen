@@ -105,6 +105,8 @@ lex_match_directive :: proc(word: string) -> Llp_Token_Type {
 		return .Dir_Node_Type
 	case "expect_conflict":
 		return .Dir_Expect_Conflict
+	case "max_iterations":
+		return .Dir_Max_Iterations
 	case:
 		return .Error
 	}

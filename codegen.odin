@@ -391,12 +391,14 @@ parser_error :: proc(p: ^Parser, msg: string) {{
 emit_push_token :: proc(b: ^strings.Builder, g: ^Grammar, states: ^[dynamic]Gen_State) {
 	tk_type := get_token_type(g)
 
+	max_iter := g.max_iterations if g.max_iterations > 0 else 1000
+
 	fmt.sbprintf(b,
 `// トークンをプッシュしてパース
 parser_push_token :: proc(p: ^Parser, token: %s) -> Parse_Result {{
 	tk := token
 	action: Parse_Loop_Action
-	max_iterations := 1000
+	max_iterations := %d
 
 	for i := 0; i < max_iterations; i += 1 {{
 		top := parser_get_state(p)
@@ -418,7 +420,7 @@ parser_push_token :: proc(p: ^Parser, token: %s) -> Parse_Result {{
 		#partial switch pstate {{
 		case .Start, .End, .Error:
 			action = parse_start(p, &tk)
-`, tk_type)
+`, tk_type, max_iter)
 
 	// 各規則の状態に基づくディスパッチを生成
 	groups := build_state_groups(g, states)
@@ -447,6 +449,10 @@ parser_push_token :: proc(p: ^Parser, token: %s) -> Parse_Result {{
 
 		if action == .Break {
 			break
+		}
+
+		if i >= max_iterations - 1 {
+			parser_error(p, "max iterations exceeded in parser_push_token")
 		}
 	}
 

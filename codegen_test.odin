@@ -835,3 +835,47 @@ term : Number ;
 	// nonassoc チェックが含まれていない
 	testing.expect(t, !strings.contains(code, "Non-associative operator"), "nonassoc check should not exist for left-assoc only")
 }
+
+@(test)
+codegen_max_iterations_default_test :: proc(t: ^testing.T) {
+	// デフォルトでは max_iterations = 1000
+	input := `%package test_pkg
+%token Eof Number
+%%
+expr : Number ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+	testing.expectf(t, ok, "Expected codegen success")
+	testing.expect(t, strings.contains(code, "max_iterations := 1000"), "Expected default max_iterations 1000")
+}
+
+@(test)
+codegen_max_iterations_custom_test :: proc(t: ^testing.T) {
+	// %max_iterations でカスタム値を設定
+	input := `%package test_pkg
+%token Eof Number
+%max_iterations 500
+%%
+expr : Number ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+	testing.expectf(t, ok, "Expected codegen success")
+	testing.expect(t, strings.contains(code, "max_iterations := 500"), "Expected custom max_iterations 500")
+	testing.expect(t, !strings.contains(code, "max_iterations := 1000"), "Should not have default 1000")
+}
+
+@(test)
+codegen_max_iterations_error_message_test :: proc(t: ^testing.T) {
+	// max_iterations 超過時のエラーメッセージが生成される
+	input := `%package test_pkg
+%token Eof Number
+%%
+expr : Number ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+	testing.expectf(t, ok, "Expected codegen success")
+	testing.expect(t, strings.contains(code, "max iterations exceeded"), "Expected max iterations error message")
+}
