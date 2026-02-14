@@ -103,6 +103,8 @@ lex_match_directive :: proc(word: string) -> Llp_Token_Type {
 		return .Dir_Token_Type
 	case "node_type":
 		return .Dir_Node_Type
+	case "expect_conflict":
+		return .Dir_Expect_Conflict
 	case:
 		return .Error
 	}
@@ -189,6 +191,19 @@ lex_scan_token :: proc(lex: ^Lex) -> Llp_Token {
 		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_' {
 			ident := lex_read_ident(lex, start)
 			return lex_make_token(lex, .Ident, ident, line, col)
+		}
+		// 数字 (ディレクティブの引数として使用)
+		if ch >= '0' && ch <= '9' {
+			for lex.offset < len(lex.input) {
+				c := lex.input[lex.offset]
+				if c >= '0' && c <= '9' {
+					lex.offset += 1
+					lex.column += 1
+				} else {
+					break
+				}
+			}
+			return lex_make_token(lex, .Ident, lex.input[start:lex.offset], line, col)
 		}
 		// 不明な文字
 		return lex_make_token(lex, .Error, lex.input[start:lex.offset], line, col)

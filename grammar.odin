@@ -49,6 +49,7 @@ Grammar :: struct {
 	precedence:      [dynamic]Prec_Entry, // 優先順位テーブル (index順に低→高)
 	rules:           [dynamic]Rule,       // 文法規則
 	start_rule:      string,              // 開始規則名 (最初のrule)
+	expected_conflicts: map[string]int,    // %expect_conflict で指定された規則名→許容衝突数
 	// 以下は analysis.odin で設定
 	token_set:       map[string]bool,     // 全トークンのセット (O(1)検索用)
 	rule_map:        map[string]int,      // 規則名 → rules配列のインデックス
@@ -68,6 +69,7 @@ grammar_destroy :: proc(g: ^Grammar) {
 		delete(rule.productions)
 	}
 	delete(g.rules)
+	delete(g.expected_conflicts)
 	delete(g.token_set)
 	delete(g.rule_map)
 }

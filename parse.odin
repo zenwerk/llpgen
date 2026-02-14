@@ -1,6 +1,7 @@
 package llpgen
 
 import "core:fmt"
+import "core:strconv"
 
 // DSLパーサー
 Llp_Parser :: struct {
@@ -93,6 +94,8 @@ parse_header_section :: proc(p: ^Llp_Parser, g: ^Grammar) {
 			parse_token_type_directive(p, g)
 		case .Dir_Node_Type:
 			parse_node_type_directive(p, g)
+		case .Dir_Expect_Conflict:
+			parse_expect_conflict_directive(p, g)
 		case .Separator:
 			return // ヘッダ終了
 		case .Eof:
@@ -180,6 +183,29 @@ parse_node_type_directive :: proc(p: ^Llp_Parser, g: ^Grammar) {
 		return
 	}
 	g.node_type_name = p.current.lexeme
+	llp_parser_advance(p)
+}
+
+// %expect_conflict <ident> <number>
+parse_expect_conflict_directive :: proc(p: ^Llp_Parser, g: ^Grammar) {
+	llp_parser_advance(p) // %expect_conflict を消費
+	if p.current.type != .Ident {
+		llp_parser_error(p, fmt.tprintf("expected rule name after %%expect_conflict at line %d", p.current.line))
+		return
+	}
+	rule_name := p.current.lexeme
+	llp_parser_advance(p)
+
+	if p.current.type != .Ident {
+		llp_parser_error(p, fmt.tprintf("expected conflict count after rule name '%s' at line %d", rule_name, p.current.line))
+		return
+	}
+	count, ok := strconv.parse_int(p.current.lexeme)
+	if !ok {
+		llp_parser_error(p, fmt.tprintf("expected integer count, got '%s' at line %d", p.current.lexeme, p.current.line))
+		return
+	}
+	g.expected_conflicts[rule_name] = count
 	llp_parser_advance(p)
 }
 

@@ -127,10 +127,29 @@ main :: proc() {
 	conflicts := check_ll1_conflicts(&g, firsts, follows, &op_loops)
 	defer ll1_conflicts_destroy(&conflicts)
 	if len(conflicts) > 0 {
-		fmt.eprintfln("Warning: %d LL(1) conflict(s) detected:", len(conflicts))
+		// %expect_conflict で予想された衝突を分類
+		// 規則ごとの衝突数をカウント
+		conflict_counts: map[string]int
+		defer delete(conflict_counts)
 		for &c in conflicts {
-			fmt.eprintfln("  rule '%s': productions %d and %d conflict on tokens: %s",
-				c.rule_name, c.prod_i, c.prod_j, strings.join(c.tokens[:], ", ", context.temp_allocator))
+			conflict_counts[c.rule_name] = (conflict_counts[c.rule_name] or_else 0) + 1
+		}
+
+		has_unexpected := false
+		for &c in conflicts {
+			expected, has_expected := g.expected_conflicts[c.rule_name]
+			if has_expected && conflict_counts[c.rule_name] <= expected {
+				fmt.eprintfln("Info: rule '%s': productions %d and %d conflict on tokens: %s (expected)",
+					c.rule_name, c.prod_i, c.prod_j, strings.join(c.tokens[:], ", ", context.temp_allocator))
+			} else {
+				has_unexpected = true
+				fmt.eprintfln("Warning: rule '%s': productions %d and %d conflict on tokens: %s",
+					c.rule_name, c.prod_i, c.prod_j, strings.join(c.tokens[:], ", ", context.temp_allocator))
+			}
+		}
+
+		if has_unexpected {
+			fmt.eprintfln("Warning: %d LL(1) conflict(s) detected (some may be unexpected)", len(conflicts))
 		}
 	}
 

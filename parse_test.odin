@@ -362,3 +362,37 @@ expr : Number ;`
 	defer grammar_destroy(&g)
 	testing.expect(t, !ok, "Expected parse failure for missing %% separator")
 }
+
+// ========================================================================
+// %expect_conflict ディレクティブテスト
+// ========================================================================
+
+@(test)
+parse_expect_conflict_directive_test :: proc(t: ^testing.T) {
+	input := `%token Eof Number Plus
+%expect_conflict expr 3
+%%
+expr : Number ;
+%%`
+	g, ok := parse_llp(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+	testing.expect(t, "expr" in g.expected_conflicts, "Expected 'expr' in expected_conflicts")
+	testing.expectf(t, g.expected_conflicts["expr"] == 3, "Expected count 3, got %d", g.expected_conflicts["expr"])
+}
+
+@(test)
+parse_expect_conflict_multiple_test :: proc(t: ^testing.T) {
+	input := `%token Eof Number Plus
+%expect_conflict expr 3
+%expect_conflict stmt 1
+%%
+expr : Number ;
+stmt : Number ;
+%%`
+	g, ok := parse_llp(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+	testing.expectf(t, g.expected_conflicts["expr"] == 3, "Expected expr count 3")
+	testing.expectf(t, g.expected_conflicts["stmt"] == 1, "Expected stmt count 1")
+}
