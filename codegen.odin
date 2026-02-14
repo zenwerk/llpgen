@@ -722,8 +722,16 @@ emit_production_body :: proc(b: ^strings.Builder, input: Codegen_Input, rule: ^R
 			// Nonterminal の後: 次の実在する状態に set_state + begin
 			next_real := find_next_real_state(input.states, rule.name, prod_idx, 1, prod)
 			if next_real == "" {
-				// 残りの状態なし → parse_end + begin
+				// 残りの状態なし: 後続の Nonterminal を逆順にスタックに積む
 				fmt.sbprintf(b, "%sparser_end(p)\n", indent)
+				// 後続の Nonterminal を逆順に begin (スタックなので逆順 = 正順実行)
+				for i := len(prod.symbols) - 1; i >= 1; i -= 1 {
+					sym := prod.symbols[i]
+					if sym.kind == .Nonterminal {
+						nt_start := find_state_for(input.states, sym.name, 0, 0)
+						fmt.sbprintf(b, "%sparser_begin(p, .%s, top.node)\n", indent, nt_start)
+					}
+				}
 				fmt.sbprintf(b, "%sparser_begin(p, .%s, top.node)\n", indent, nonterminal_start)
 			} else {
 				fmt.sbprintf(b, "%sparser_set_state(p, .%s)\n", indent, next_real)
@@ -762,8 +770,15 @@ emit_transition_after_pos :: proc(b: ^strings.Builder, input: Codegen_Input, rul
 		nonterminal_start := find_state_for(input.states, next_sym.name, 0, 0)
 		next_real := find_next_real_state(input.states, rule.name, prod_idx, next_pos + 1, prod)
 		if next_real == "" {
-			// Nonterminal の後に状態なし → parse_end + begin
+			// Nonterminal の後に状態なし: 後続の Nonterminal を逆順にスタックに積む
 			fmt.sbprintf(b, "%sparser_end(p)\n", indent)
+			for i := len(prod.symbols) - 1; i >= next_pos + 1; i -= 1 {
+				sym := prod.symbols[i]
+				if sym.kind == .Nonterminal {
+					nt_start := find_state_for(input.states, sym.name, 0, 0)
+					fmt.sbprintf(b, "%sparser_begin(p, .%s, top.node)\n", indent, nt_start)
+				}
+			}
 			fmt.sbprintf(b, "%sparser_begin(p, .%s, top.node)\n", indent, nonterminal_start)
 		} else {
 			fmt.sbprintf(b, "%sparser_set_state(p, .%s)\n", indent, next_real)
