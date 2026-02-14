@@ -97,6 +97,40 @@ grammar_build_indices :: proc(g: ^Grammar) {
 	}
 }
 
+// 未定義シンボル情報
+Undefined_Symbol :: struct {
+	name:      string,
+	rule_name: string,
+	prod_idx:  int,
+}
+
+// 未定義シンボルの検出: token_set にも rule_map にも存在しないシンボルを検出する
+// grammar_build_indices() の後に呼ぶこと
+check_undefined_symbols :: proc(g: ^Grammar) -> [dynamic]Undefined_Symbol {
+	results: [dynamic]Undefined_Symbol
+	reported: map[string]bool
+	defer delete(reported)
+
+	for &rule in g.rules {
+		for &prod, prod_idx in rule.productions {
+			for &sym in prod.symbols {
+				if sym.name not_in g.token_set && sym.name not_in g.rule_map {
+					if sym.name not_in reported {
+						append(&results, Undefined_Symbol{
+							name      = sym.name,
+							rule_name = rule.name,
+							prod_idx  = prod_idx,
+						})
+						reported[sym.name] = true
+					}
+				}
+			}
+		}
+	}
+
+	return results
+}
+
 // ========================================================================
 // 3.1a-2: 直接左再帰の検出
 // ========================================================================
@@ -248,7 +282,7 @@ compute_first_sets :: proc(g: ^Grammar) -> First_Sets {
 
 	// 全非終端記号の FIRST を空で初期化
 	for &rule in g.rules {
-		firsts[rule.name] = {}
+		firsts[rule.name] = make(map[string]bool)
 	}
 
 	// 不動点アルゴリズム
@@ -364,7 +398,7 @@ compute_follow_sets :: proc(g: ^Grammar, firsts: First_Sets) -> Follow_Sets {
 
 	// 全非終端記号の FOLLOW を空で初期化
 	for &rule in g.rules {
-		follows[rule.name] = {}
+		follows[rule.name] = make(map[string]bool)
 	}
 
 	// FOLLOW(開始記号) に Eof ($) を追加
@@ -394,6 +428,9 @@ compute_follow_sets :: proc(g: ^Grammar, firsts: First_Sets) -> Follow_Sets {
 						if tok == EPSILON_MARKER {
 							continue
 						}
+						if sym.name not_in follows {
+							continue // 未定義の非終端記号はスキップ
+						}
 						if !(tok in follows[sym.name]) {
 							(&follows[sym.name])[tok] = true
 							changed = true
@@ -402,6 +439,9 @@ compute_follow_sets :: proc(g: ^Grammar, firsts: First_Sets) -> Follow_Sets {
 
 					// β が ε を導出可能 (または β が空) → FOLLOW(sym) に FOLLOW(rule) を追加
 					if EPSILON_MARKER in first_beta {
+						if sym.name not_in follows {
+							continue // 未定義の非終端記号はスキップ
+						}
 						for tok in follows[rule.name] {
 							if !(tok in follows[sym.name]) {
 								(&follows[sym.name])[tok] = true

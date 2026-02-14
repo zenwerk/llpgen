@@ -1,0 +1,484 @@
+%package streem
+
+%token_type Token
+%node_type Node
+
+// キーワード
+%token Kw_If Kw_Else Kw_Case Kw_Emit Kw_Skip Kw_Return
+%token Kw_Namespace Kw_Class Kw_Import Kw_Def Kw_Method Kw_New
+%token Kw_Nil Kw_True Kw_False
+
+// 演算子
+%token Op_Lasgn Op_Rasgn
+%token Op_Lambda Op_Lambda2 Op_Lambda3
+%token Op_Plus Op_Minus Op_Mult Op_Div Op_Mod
+%token Op_Eq Op_Neq Op_Lt Op_Le Op_Gt Op_Ge
+%token Op_And Op_Or
+%token Op_Bar Op_Amper
+%token Op_Colon2
+%token Op_Not Op_Tilde
+
+// 区切り文字
+%token Lparen Rparen Lbrace Rbrace Lbracket Rbracket
+%token Comma Dot Eq At
+
+// リテラル・識別子
+%token Lit_Time Lit_Number Lit_Symbol Lit_String
+%token Ident Label
+
+// 文区切り
+%token Semicolon Newline
+
+// 特殊
+%token Eof Error
+
+// 演算子の優先順位 (下から上へ優先度が上がる)
+//
+// NOTE: parse.y では全演算子を1つの expr ルールに集約し %left/%right で解決するが、
+// LL(1) では優先順位ごとに非終端記号を分離する必要がある。
+// llpgen の operator loop (A : A op B | B) パターンで左再帰を自動変換する。
+%left Op_Bar
+%left Op_Amper
+%left Op_Or
+%left Op_And
+%nonassoc Op_Eq Op_Neq
+%left Op_Lt Op_Le Op_Gt Op_Ge
+%left Op_Plus Op_Minus
+%left Op_Mult Op_Div Op_Mod
+
+// 文区切りトークン
+%term Semicolon Newline
+
+%%
+
+// ========================================================================
+// プログラム構造
+// ========================================================================
+
+// program : opt_terms topstmt_list opt_terms | opt_terms ;
+//
+// NOTE: parse.y の topstmts は3つの alternative があるが、LL(1) では
+// terms と topstmt_list の先頭トークンが衝突する。
+// ここでは opt_terms を先頭に統一してから topstmt_list_opt で分岐する。
+program : opt_terms topstmt_list_opt ;
+
+topstmt_list_opt : topstmt topstmt_rest
+                 |
+                 ;
+
+topstmt_rest : terms topstmt topstmt_rest
+             |
+             ;
+
+// ========================================================================
+// トップレベル文
+// ========================================================================
+
+topstmt : Kw_Namespace Ident Lbrace program Rbrace
+        | Kw_Class Ident Lbrace program Rbrace
+        | Kw_Import Ident
+        | Kw_Method fname Lparen opt_f_args Rparen method_body
+        | stmt
+        ;
+
+// method foo(args) { stmts } | method foo(args) = expr
+method_body : Lbrace stmts Rbrace
+            | Eq expr
+            ;
+
+// ========================================================================
+// 文リスト (ブロック内部)
+// ========================================================================
+
+// stmts : opt_terms stmt_list_opt ;
+// parse.y の stmts と同じ3分岐を統一
+stmts : opt_terms stmt_list_opt ;
+
+stmt_list_opt : stmt stmt_rest
+              |
+              ;
+
+stmt_rest : terms stmt stmt_rest
+          |
+          ;
+
+// ========================================================================
+// 文
+// ========================================================================
+
+// NOTE: parse.y の stmt には以下の LL(1) 衝突がある:
+//   - "var '=' expr" vs "expr" (どちらも identifier で始まる)
+//   - "expr op_rasgn var" も expr で始まる
+// LL(1) では expr を先にパースし、後続トークンで判定する。
+//   expr '=' expr  → 代入文 (左辺が identifier なら)
+//   expr '=>' var  → 右代入文
+//   expr           → 式文
+
+stmt : Kw_Def fname def_body
+     | Kw_Skip
+     | Kw_Emit opt_args
+     | Kw_Return opt_args
+     | expr stmt_suffix
+     ;
+
+// expr の後の判定
+stmt_suffix : Eq expr
+            | Op_Rasgn Ident
+            |
+            ;
+
+// def foo(args) { stmts } | def foo(args) = expr | def foo = expr
+def_body : Lparen opt_f_args Rparen method_body
+         | Eq expr
+         ;
+
+// ========================================================================
+// 式 — 優先順位ごとに非終端記号を分離
+// ========================================================================
+//
+// parse.y では1つの expr に全演算子が集約されているが、
+// LL(1) push parser では優先順位ごとにルールを分ける。
+//
+// 優先順位 (低→高):
+//   pipe_expr     : Op_Bar      (left)  -- ストリーム接続
+//   amper_expr    : Op_Amper    (left)
+//   or_expr       : Op_Or       (left)
+//   and_expr      : Op_And      (left)
+//   eq_expr       : Op_Eq/Neq   (nonassoc)
+//   cmp_expr      : Op_Lt/Le/Gt/Ge (left)
+//   add_expr      : Op_Plus/Minus  (left)
+//   mul_expr      : Op_Mult/Div/Mod (left)
+//   unary_expr    : 前置単項演算子
+//   postfix_expr  : メソッド呼び出し (.method)
+//   primary       : リテラル、変数、括弧式 等
+//
+// llpgen の operator loop パターン (A : A op B | B) で
+// 左再帰は自動的に反復ループに変換される。
+
+// if 式は演算子より優先度が低い
+expr : Kw_If condition pipe_expr opt_else
+     | lambda_expr
+     ;
+
+// ラムダ式
+// NOTE: parse.y の '(' opt_f_args ')' -> expr と '(' opt_f_args ')->{' stmts '}'
+// は primary の '(' expr ')' と先頭トークンが衝突するため、
+// primary 内で '(' の後の解析で分岐させる必要がある。
+lambda_expr : pipe_expr ;
+
+pipe_expr : pipe_expr Op_Bar amper_expr
+          | amper_expr
+          ;
+
+amper_expr : amper_expr Op_Amper or_expr
+           | or_expr
+           ;
+
+or_expr : or_expr Op_Or and_expr
+        | and_expr
+        ;
+
+and_expr : and_expr Op_And eq_expr
+         | eq_expr
+         ;
+
+// nonassoc: LL(1) では operator loop にならない。
+// A : A op B | B で op が nonassoc の場合、
+// 生成されたループ内で「1回だけ」にする制約はユーザコードで処理。
+eq_expr : eq_expr Op_Eq cmp_expr
+        | eq_expr Op_Neq cmp_expr
+        | cmp_expr
+        ;
+
+cmp_expr : cmp_expr Op_Lt add_expr
+         | cmp_expr Op_Le add_expr
+         | cmp_expr Op_Gt add_expr
+         | cmp_expr Op_Ge add_expr
+         | add_expr
+         ;
+
+add_expr : add_expr Op_Plus mul_expr
+         | add_expr Op_Minus mul_expr
+         | mul_expr
+         ;
+
+mul_expr : mul_expr Op_Mult unary_expr
+         | mul_expr Op_Div unary_expr
+         | mul_expr Op_Mod unary_expr
+         | unary_expr
+         ;
+
+// 前置単項演算子
+unary_expr : Op_Plus unary_expr
+           | Op_Minus unary_expr
+           | Op_Not unary_expr
+           | Op_Tilde unary_expr
+           | postfix_expr
+           ;
+
+// メソッド呼び出しチェーン: primary に後置 .method を繰り返し適用
+//
+// NOTE: parse.y では primary が左再帰:
+//   primary : primary '.' fname '(' opt_args ')' opt_block
+//           | primary '.' fname opt_block
+//           | primary '.' '(' opt_args ')' opt_block
+//
+// これは operator loop パターン (A op B) に該当しないため、
+// llpgen では対応できない。postfix_suffix の繰り返しとして再構成する。
+postfix_expr : primary postfix_chain ;
+
+postfix_chain : Dot postfix_access postfix_chain
+              |
+              ;
+
+// .fname(...) opt_block | .fname opt_block | .( args ) opt_block
+postfix_access : fname postfix_call_args
+               | Lparen opt_args Rparen opt_block
+               ;
+
+postfix_call_args : Lparen opt_args Rparen opt_block
+                  | opt_block
+                  ;
+
+// ========================================================================
+// 一次式
+// ========================================================================
+
+// NOTE: parse.y の primary には以下の LL(1) 衝突がある:
+//   - identifier (var) vs fname block / fname '(' ... ')'
+//     → identifier の後に '{' か '(' が来たら関数呼び出し、そうでなければ変数参照
+//   - '(' expr ')' vs lambda '(' args ')' -> ...'
+//     → '(' の後に ')' -> / args ')' -> が来たらラムダ、そうでなければグループ化
+//   - '[' ']' vs '[' args ']'
+//     → '[' の後で判定
+//
+// ident_or_call で identifier 始まりの衝突を解決する。
+
+primary : Lit_Number
+        | Lit_String
+        | Lit_Symbol
+        | Lit_Time
+        | ident_or_call
+        | paren_expr
+        | bracket_expr
+        | block
+        | Kw_Nil
+        | Kw_True
+        | Kw_False
+        | Kw_New Ident Lbracket opt_args Rbracket
+        | Op_Amper fname
+        ;
+
+// identifier の後に続くもので分岐
+// NOTE: lit_string も fname になれるが、lit_string '{' の組み合わせが
+// 関数呼び出しとして使われるケースは fname block の形。
+// ここでは identifier 始まりだけを特別扱いする。
+// lit_string 始まりの fname block は別途 primary で処理が必要だが、
+// Lit_String は既に primary の別 alternative でリテラルとして扱われるため、
+// fname block (lit_string block) のケースは LL(1) 衝突となる。
+// → 現状の llpgen DSL では解決困難 (後述の「不足機能」参照)
+ident_or_call : Ident ident_suffix ;
+
+ident_suffix : Lbrace stmts Rbrace
+             | Lparen opt_args Rparen opt_block
+             |
+             ;
+
+// '(' で始まる式: グループ化 or ラムダ
+// parse.y: '(' expr ')' | '(' opt_f_args ')' -> expr | '(' opt_f_args ')->{' stmts '}'
+//
+// NOTE: LL(1) では '(' の後の内容で判定が必要だが、
+// opt_f_args は identifier のリスト、expr も identifier で始まりうる。
+// 正確な判定には2トークン以上の先読みが必要 → LL(1) 限界。
+// ここでは '(' expr ')' を基本とし、')' の後に -> が来たらラムダとして再解釈する
+// 戦略を取る。ただしこれはパーサーイベントの後処理で対応する必要がある。
+paren_expr : Lparen paren_content ;
+
+paren_content : expr Rparen paren_suffix
+              | Rparen paren_suffix
+              ;
+
+// ')' の後: lambda '->' or nothing
+// NOTE: Op_Lambda2 は ')' を含む特殊トークン ')→' なので、
+// 実際のレキサー設計では ')' と '->' を別トークンにするか、
+// Op_Lambda2 を使うかの選択がある。
+// ここでは parse.y に忠実に Op_Lambda2/Op_Lambda3 を使う。
+paren_suffix : Op_Lambda2 expr
+             | Op_Lambda3 stmts Rbrace
+             |
+             ;
+
+// '[' で始まる式: 配列リテラル or 空配列
+bracket_expr : Lbracket bracket_content ;
+
+bracket_content : arg arg_rest Rbracket
+                | Rbracket
+                ;
+
+// ========================================================================
+// ブロック
+// ========================================================================
+
+// '{' の後: stmts '}' | bparam stmts '}' | case_body '}' | ...
+// NOTE: LL(1) では '{' の後が case (keyword_case) か、
+// lambda param (identifier/-> ...) か、通常の stmts かを判定する必要がある。
+// bparam は op_lambda または f_args op_lambda で始まり、
+// f_args は identifier で始まるため stmts と衝突する。
+// → '{' identifier の後に ',' か '->' が来たら bparam、
+//   そうでなければ stmts として解釈する必要があり、LL(1) では困難。
+// ここでは簡略化した形で記述する。
+
+block : Lbrace block_content Rbrace ;
+
+block_content : Op_Lambda stmts
+              | Kw_Case case_body_rest
+              | stmts
+              ;
+
+case_body_rest : cparam stmts case_body_cont ;
+
+case_body_cont : Kw_Case cparam stmts case_body_cont
+               | Kw_Else Op_Lambda stmts
+               |
+               ;
+
+// ========================================================================
+// 条件式・if関連
+// ========================================================================
+
+condition : Lparen expr Rparen ;
+
+opt_else : Kw_Else expr
+         |
+         ;
+
+// ========================================================================
+// 引数
+// ========================================================================
+
+opt_args : arg arg_rest
+         |
+         ;
+
+arg : Label expr
+    | Op_Mult expr
+    | expr
+    ;
+
+arg_rest : Comma arg arg_rest
+         |
+         ;
+
+// ========================================================================
+// 関数引数 (仮引数)
+// ========================================================================
+
+opt_f_args : Ident f_args_rest
+           |
+           ;
+
+f_args_rest : Comma Ident f_args_rest
+            |
+            ;
+
+// ========================================================================
+// 関数名 (fname)
+// ========================================================================
+
+fname : Ident
+      | Lit_String
+      ;
+
+// ========================================================================
+// パターンマッチ (case 式)
+// ========================================================================
+
+cparam : Op_Lambda
+       | Kw_If expr Op_Lambda
+       | pattern Op_Lambda
+       | pattern Kw_If expr Op_Lambda
+       ;
+
+// NOTE: parse.y の pattern/pary/pstruct/pterm はかなり複雑で、
+// LL(1) 衝突が多い (pary vs pstruct: identifier vs label の判定等)。
+// ここでは簡略化した形で記述する。
+
+pattern : pary_or_pstruct pattern_splat_opt ;
+
+pary_or_pstruct : pterm pary_rest
+                | Label pterm pstruct_rest
+                ;
+
+pary_rest : Comma pterm pary_rest
+          |
+          ;
+
+pstruct_rest : Comma Label pterm pstruct_rest
+             |
+             ;
+
+pattern_splat_opt : Comma Op_Mult pterm splat_tail
+                  |
+                  ;
+
+// *pterm 始まりのパターン (pary 部分がない splat)
+// NOTE: pattern の先頭が Op_Mult の場合の処理。
+// pattern 規則の再構成が必要。
+splat_tail : Comma pary_or_pstruct
+           |
+           ;
+
+pterm : Ident pterm_suffix
+      | Lit_Number
+      | Lit_String
+      | Kw_Nil
+      | Kw_True
+      | Kw_False
+      | Lbracket pterm_bracket_content
+      ;
+
+pterm_suffix : At Ident
+             |
+             ;
+
+pterm_bracket_content : Rbracket
+                      | At Ident pterm_bracket_at
+                      | pattern Rbracket
+                      ;
+
+pterm_bracket_at : Rbracket
+                 | pattern Rbracket
+                 ;
+
+// ========================================================================
+// 文区切り
+// ========================================================================
+
+opt_terms : terms
+          |
+          ;
+
+terms : term terms_rest ;
+
+terms_rest : term terms_rest
+           |
+           ;
+
+term : Semicolon
+     | Newline
+     ;
+
+// ========================================================================
+// ブロックパラメータ
+// ========================================================================
+// NOTE: bparam (-> | f_args ->) は block 内で直接展開済み
+
+// ========================================================================
+// オプショナルブロック
+// ========================================================================
+
+opt_block : block
+          |
+          ;
+
+%%

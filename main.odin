@@ -33,6 +33,18 @@ main :: proc() {
 	// 3. grammar_build_indices() でインデックス構築
 	grammar_build_indices(&g)
 
+	// 3.1. 未定義シンボルの検出
+	undef_syms := check_undefined_symbols(&g)
+	defer delete(undef_syms)
+	if len(undef_syms) > 0 {
+		fmt.eprintfln("Error: %d undefined symbol(s) found:", len(undef_syms))
+		for &us in undef_syms {
+			fmt.eprintfln("  '%s' used in rule '%s' (production %d) is not defined as a %%token or grammar rule",
+				us.name, us.rule_name, us.prod_idx)
+		}
+		os.exit(1)
+	}
+
 	// 3.5. 演算子ループパターンの検出 + 変換不可能な左再帰の検出
 	op_loops := detect_operator_loops(&g)
 	defer operator_loops_destroy(&op_loops)
