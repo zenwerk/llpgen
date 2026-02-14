@@ -245,10 +245,11 @@ Parse_Result :: enum {{
 
 // パーサー状態
 Parse_State :: struct {{
-	state: Parse_State_Kind,
-	node:  ^^%s,    // 現在のノードへのポインタ
-	saved: ^%s,     // 保存用ノード
-	op:    string,    // 演算子 (必要に応じて)
+	state:     Parse_State_Kind,
+	node:      ^^%s,    // 現在のノードへのポインタ
+	saved:     ^%s,     // 保存用ノード
+	op:        string,    // 演算子 (必要に応じて)
+	user_data: rawptr,    // ユーザー定義データ
 }}
 
 // パーサー

@@ -913,3 +913,17 @@ expr : Number ;
 	// パニックモード回復コードが含まれていない
 	testing.expect(t, !strings.contains(code, "is_term(tk)"), "is_term should not be in code without %term")
 }
+
+@(test)
+codegen_user_data_field_test :: proc(t: ^testing.T) {
+	// Parse_State に user_data フィールドが生成される
+	input := `%package test_pkg
+%token Eof Number
+%%
+expr : Number ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+	testing.expectf(t, ok, "Expected codegen success")
+	testing.expect(t, strings.contains(code, "user_data: rawptr"), "Expected user_data field in Parse_State")
+}
