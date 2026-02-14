@@ -88,6 +88,24 @@ main :: proc() {
 		os.exit(1)
 	}
 
+	// 3.6. 間接左再帰の検出
+	indirect_recs := check_indirect_left_recursion(&g, &op_loops)
+	defer indirect_left_recursion_destroy(&indirect_recs)
+	if len(indirect_recs) > 0 {
+		fmt.eprintfln("Error: %d indirect left recursion(s) detected:", len(indirect_recs))
+		for &ir in indirect_recs {
+			fmt.eprintf("  cycle: ")
+			for name, i in ir.cycle {
+				if i > 0 { fmt.eprintf(" -> ") }
+				fmt.eprintf("%s", name)
+			}
+			fmt.eprintln()
+		}
+		fmt.eprintln("  LL parsers cannot handle indirect left recursion.")
+		fmt.eprintln("  Rewrite the grammar to eliminate the cycle.")
+		os.exit(1)
+	}
+
 	// 4. compute_first_sets(), compute_follow_sets() でFIRST/FOLLOW集合を計算
 	firsts := compute_first_sets(&g)
 	defer {

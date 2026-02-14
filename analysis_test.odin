@@ -696,6 +696,74 @@ expr : expr Plus Number Minus
 }
 
 // ========================================================================
+// 間接左再帰の検出テスト
+// ========================================================================
+
+@(test)
+analysis_indirect_left_recursion_test :: proc(t: ^testing.T) {
+	// A : B c ; B : A d ; → 間接左再帰
+	input := `%token Eof C_tok D_tok
+%%
+a : b C_tok ;
+b : a D_tok ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	op_loops := detect_operator_loops(&g)
+	defer operator_loops_destroy(&op_loops)
+
+	indirect_recs := check_indirect_left_recursion(&g, &op_loops)
+	defer indirect_left_recursion_destroy(&indirect_recs)
+
+	testing.expectf(t, len(indirect_recs) > 0, "Expected indirect left recursion, got %d", len(indirect_recs))
+}
+
+@(test)
+analysis_no_indirect_left_recursion_test :: proc(t: ^testing.T) {
+	// 間接左再帰のない文法
+	input := `%token Eof Number Plus
+%%
+expr : Number Plus term ;
+term : Number ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	op_loops := detect_operator_loops(&g)
+	defer operator_loops_destroy(&op_loops)
+
+	indirect_recs := check_indirect_left_recursion(&g, &op_loops)
+	defer indirect_left_recursion_destroy(&indirect_recs)
+
+	testing.expectf(t, len(indirect_recs) == 0, "Expected no indirect left recursion, got %d", len(indirect_recs))
+}
+
+@(test)
+analysis_indirect_left_recursion_three_rules_test :: proc(t: ^testing.T) {
+	// A : B x ; B : C y ; C : A z ; → 3規則の間接左再帰
+	input := `%token Eof X_tok Y_tok Z_tok
+%%
+a : b X_tok ;
+b : c Y_tok ;
+c : a Z_tok ;
+%%`
+	g, ok := parse_and_build(input)
+	defer grammar_destroy(&g)
+	testing.expectf(t, ok, "Expected parse success")
+
+	op_loops := detect_operator_loops(&g)
+	defer operator_loops_destroy(&op_loops)
+
+	indirect_recs := check_indirect_left_recursion(&g, &op_loops)
+	defer indirect_left_recursion_destroy(&indirect_recs)
+
+	testing.expectf(t, len(indirect_recs) > 0, "Expected indirect left recursion for 3-rule cycle, got %d", len(indirect_recs))
+}
+
+// ========================================================================
 // Phase 4: 通過状態スキップと意味的命名テスト
 // ========================================================================
 

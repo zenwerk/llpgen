@@ -165,6 +165,164 @@ check_left_recursion :: proc(g: ^Grammar) -> [dynamic]Left_Recursion {
 	return results
 }
 
+// 間接左再帰の情報
+Indirect_Left_Recursion :: struct {
+	cycle: [dynamic]string, // サイクルを構成する規則名のリスト (例: {"A", "B", "A"})
+}
+
+indirect_left_recursion_destroy :: proc(results: ^[dynamic]Indirect_Left_Recursion) {
+	for &r in results {
+		delete(r.cycle)
+	}
+	delete(results^)
+}
+
+// 間接左再帰を検出する (A : B ... ; B : A ... ; のような循環)
+// grammar_build_indices() の後に呼ぶこと
+// op_loops: 演算子ループとして既に検出済みの規則はスキップ
+check_indirect_left_recursion :: proc(g: ^Grammar, op_loops: ^map[string]Operator_Loop = nil) -> [dynamic]Indirect_Left_Recursion {
+	results: [dynamic]Indirect_Left_Recursion
+
+	// 各規則の先頭シンボルで有向グラフを構築 (Nonterminal のみ)
+	// edge: rule_name → {先頭に来る可能性のある Nonterminal 名}
+	edges: map[string]map[string]bool
+	defer {
+		for _, &v in edges {
+			delete(v)
+		}
+		delete(edges)
+	}
+
+	for &rule in g.rules {
+		// 演算子ループ規則はスキップ
+		if op_loops != nil && rule.name in op_loops^ {
+			continue
+		}
+		edges[rule.name] = make(map[string]bool)
+		for &prod in rule.productions {
+			// ε 導出可能な先頭シンボルを考慮してエッジを追加
+			add_leading_nonterminal_edges(g, &edges, rule.name, prod.symbols[:])
+		}
+	}
+
+	// DFS でサイクルを検出
+	Color :: enum { White, Gray, Black }
+	color: map[string]Color
+	parent: map[string]string
+	defer delete(color)
+	defer delete(parent)
+
+	for &rule in g.rules {
+		if op_loops != nil && rule.name in op_loops^ {
+			continue
+		}
+		color[rule.name] = .White
+	}
+
+	// DFS
+	for &rule in g.rules {
+		if op_loops != nil && rule.name in op_loops^ {
+			continue
+		}
+		if color[rule.name] != .White {
+			continue
+		}
+		// DFS スタック: (node, parent)
+		stack: [dynamic]struct{node, par: string}
+		defer delete(stack)
+		append(&stack, struct{node, par: string}{rule.name, ""})
+
+		for len(stack) > 0 {
+			top := pop(&stack)
+			u := top.node
+
+			if color[u] == .Black {
+				continue
+			}
+
+			if color[u] == .Gray {
+				// Gray → Black: 探索完了
+				color[u] = .Black
+				continue
+			}
+
+			// White → Gray
+			color[u] = .Gray
+			parent[u] = top.par
+			// Gray → Black のマーカーをプッシュ
+			append(&stack, struct{node, par: string}{u, ""})
+
+			if u in edges {
+				for v in edges[u] {
+					if v not_in color {
+						continue // 演算子ループ等で除外された規則
+					}
+					if color[v] == .Gray && v != u {
+						// 間接左再帰サイクルを発見 (直接左再帰 v==u はスキップ)
+						cycle: [dynamic]string
+						append(&cycle, v)
+						cur := u
+						for cur != v {
+							append(&cycle, cur)
+							if cur in parent {
+								cur = parent[cur]
+							} else {
+								break
+							}
+						}
+						append(&cycle, v)
+						// サイクルを逆順にして正しい順序に
+						// (現在は v → ... → u → v の逆順)
+						for i := 0; i < len(cycle) / 2; i += 1 {
+							j := len(cycle) - 1 - i
+							cycle[i], cycle[j] = cycle[j], cycle[i]
+						}
+						append(&results, Indirect_Left_Recursion{cycle = cycle})
+					} else if color[v] == .White {
+						append(&stack, struct{node, par: string}{v, u})
+					}
+				}
+			}
+		}
+	}
+
+	return results
+}
+
+// 先頭の Nonterminal シンボルをエッジとして追加 (ε 導出可能なシンボルを考慮)
+@(private = "file")
+add_leading_nonterminal_edges :: proc(g: ^Grammar, edges: ^map[string]map[string]bool, rule_name: string, symbols: []Symbol) {
+	for sym in symbols {
+		if sym.kind == .Terminal {
+			return // Terminal に到達したら終了
+		}
+		if sym.kind == .Nonterminal {
+			if rule_name != sym.name { // 直接左再帰はスキップ (check_left_recursion で検出済み)
+				if rule_name in edges {
+					(&edges[rule_name])[sym.name] = true
+				}
+			}
+			// sym がε導出可能か確認
+			// 簡易チェック: sym の全 production のいずれかが ε かチェック
+			if sym.name in g.rule_map {
+				rule_idx := g.rule_map[sym.name]
+				sym_rule := &g.rules[rule_idx]
+				has_epsilon := false
+				for &prod in sym_rule.productions {
+					if len(prod.symbols) == 0 {
+						has_epsilon = true
+						break
+					}
+				}
+				if has_epsilon {
+					continue // 次のシンボルもチェック
+				}
+			}
+			return // ε 導出不可なら終了
+		}
+	}
+}
+
 // ========================================================================
 // 3.1a-3: 演算子ループパターンの検出
 // ========================================================================
