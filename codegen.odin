@@ -616,7 +616,7 @@ emit_rule_start_case :: proc(b: ^strings.Builder, input: Codegen_Input, rule: ^R
 			}
 
 			// 条件を生成
-			emit_production_condition(b, input, prod)
+			emit_production_condition(b, input, prod, rule.name)
 			fmt.sbprint(b, " {\n")
 			emit_production_body(b, input, rule, prod_idx, "\t\t\t")
 			fmt.sbprint(b, "\t\t}")
@@ -649,7 +649,7 @@ emit_rule_start_case :: proc(b: ^strings.Builder, input: Codegen_Input, rule: ^R
 
 // production の条件式を生成
 @(private = "file")
-emit_production_condition :: proc(b: ^strings.Builder, input: Codegen_Input, prod: ^Production) {
+emit_production_condition :: proc(b: ^strings.Builder, input: Codegen_Input, prod: ^Production, rule_name: string = "") {
 	g := input.grammar
 
 	if len(prod.symbols) == 0 {
@@ -668,10 +668,26 @@ emit_production_condition :: proc(b: ^strings.Builder, input: Codegen_Input, pro
 
 		conditions: [dynamic]string
 		defer delete(conditions)
+		conditions_set: map[string]bool
+		defer delete(conditions_set)
 		for tok in first_set {
 			if tok == EPSILON_MARKER { continue }
 			append(&conditions, tok)
+			conditions_set[tok] = true
 		}
+
+		// FIRST 集合に ε が含まれる場合、FOLLOW 集合のトークンも追加
+		if EPSILON_MARKER in first_set && rule_name != "" && input.follows != nil {
+			if rule_name in input.follows^ {
+				for tok in input.follows[rule_name] {
+					if tok not_in conditions_set {
+						append(&conditions, tok)
+						conditions_set[tok] = true
+					}
+				}
+			}
+		}
+
 		slice.sort(conditions[:])
 
 		if len(conditions) > 0 {
@@ -681,7 +697,7 @@ emit_production_condition :: proc(b: ^strings.Builder, input: Codegen_Input, pro
 				fmt.sbprintf(b, "tk.type == .%s", conditions[ci])
 			}
 		} else {
-			fmt.sbprint(b, "if true /* TODO: FIRST set empty */")
+			fmt.sbprint(b, "if true /* WARNING: empty FIRST+FOLLOW */")
 		}
 	}
 }
@@ -967,7 +983,7 @@ emit_operator_loop_base_case :: proc(b: ^strings.Builder, input: Codegen_Input, 
 				fmt.sbprint(b, " else ")
 			}
 
-			emit_production_condition(b, input, base_prod)
+			emit_production_condition(b, input, base_prod, rule.name)
 			fmt.sbprint(b, " {\n")
 
 			first_sym := base_prod.symbols[0]

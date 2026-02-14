@@ -723,3 +723,33 @@ expr : Number ;
 
 	testing.expect(t, code1 == code2, "Expected deterministic output: two codegen runs should produce identical code")
 }
+
+@(test)
+codegen_epsilon_follow_condition_test :: proc(t: ^testing.T) {
+	// stmt が2つの production を持ち、片方が ε 導出可能な Nonterminal (opt_prefix) で始まる場合、
+	// その production の条件に FOLLOW 集合のトークンも含まれる
+	input := `%package test_pkg
+%token Eof Number Plus Minus
+%%
+stmt : Plus Number
+     | opt_prefix Number
+     ;
+opt_prefix : Minus
+           |
+           ;
+%%`
+	code, ok := generate_code_from_input(input)
+	defer delete(code)
+
+	testing.expectf(t, ok, "Expected codegen success")
+
+	// opt_prefix の FIRST は {Minus, ε}
+	// stmt の FOLLOW は {Eof}
+	// opt_prefix で始まる production の条件には FIRST(opt_prefix)\{ε} + FOLLOW(stmt) が含まれる
+	// → Minus, Eof, Number (FOLLOW に Number は含まれないが Eof は含まれる)
+	testing.expect(t, strings.contains(code, "tk.type == .Minus"), "Expected FIRST token Minus in condition")
+	testing.expect(t, strings.contains(code, "tk.type == .Eof"), "Expected FOLLOW token Eof in condition")
+
+	// if true TODO が含まれていない
+	testing.expect(t, !strings.contains(code, "if true /* TODO"), "TODO fallback should not exist")
+}
